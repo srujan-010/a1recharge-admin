@@ -157,6 +157,9 @@ class Fast2SMSWhatsAppService {
     udf1 = null,
     udf2 = null,
     udf3 = null,
+    source = 'API',
+    sentBy = null,
+    skipDbLog = false,
   }) {
     if (!this.apiKey) {
       throw new Error('FAST2SMS_API_KEY is not configured in backend environment.');
@@ -193,19 +196,67 @@ class Fast2SMSWhatsAppService {
     if (udf2) queryParams.set('udf2', udf2);
     if (udf3) queryParams.set('udf3', udf3);
 
-    console.log(`[FAST2SMS WABA SEND] Sending WhatsApp message_id=${messageId} to ${formattedNumbers} (Vars: "${formattedVars}")`);
+    console.log(`[FAST2SMS WABA SEND] Sending WhatsApp message_id=${messageId} to ${formattedNumbers} (Source: ${source}, Vars: "${formattedVars}")`);
 
-    const response = await fetch(`${this.baseUrl}/whatsapp?${queryParams.toString()}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    let response;
+    let data;
+    let isSuccess = true;
+    let errorMessage = null;
 
-    const data = await response.json();
+    try {
+      response = await fetch(`${this.baseUrl}/whatsapp?${queryParams.toString()}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
 
-    if (!response.ok || data.return === false || data.success === false) {
-      throw new Error(data.message || data.error || `Fast2SMS WhatsApp API Error (${response.status})`);
+      data = await response.json();
+
+      if (!response.ok || data.return === false || data.success === false) {
+        isSuccess = false;
+        errorMessage = data.message || data.error || `Fast2SMS WhatsApp API Error (${response.status})`;
+      }
+    } catch (err) {
+      isSuccess = false;
+      errorMessage = err.message;
+      data = { error: err.message };
+    }
+
+    // Persist canonical WhatsApp message record in MongoDB unless explicitly skipped by caller
+    if (!skipDbLog) {
+      try {
+        const WhatsAppCampaignHistory = require('../models/WhatsAppCampaignHistory');
+        const targetList = formattedNumbers.split(',').filter(Boolean);
+
+        const template = await WhatsAppTemplate.findOne({ messageId: Number(messageId) }).select('templateName templateId').lean();
+
+        await WhatsAppCampaignHistory.create({
+          messageId: Number(messageId),
+          templateId: template?.templateId || String(messageId),
+          templateName: template?.templateName || `Template_${messageId}`,
+          phoneNumberId: String(phoneNumberId),
+          recipients: targetList,
+          recipientCount: targetList.length,
+          variablesValues: formattedVars,
+          mediaUrl: mediaUrl || null,
+          documentFilename: documentFilename || null,
+          status: isSuccess ? 'DELIVERED' : 'FAILED',
+          requestId: data?.request_id || data?.data?.request_id || null,
+          fast2smsResponse: data,
+          sentBy: sentBy || null,
+          source: source || 'API',
+          sentCount: isSuccess ? targetList.length : 0,
+          failedCount: isSuccess ? 0 : targetList.length,
+          errorDetails: errorMessage,
+        });
+      } catch (dbErr) {
+        console.warn('[Fast2SMS WABA] Failed to persist canonical WhatsApp history record:', dbErr.message);
+      }
+    }
+
+    if (!isSuccess) {
+      throw new Error(errorMessage);
     }
 
     return data;

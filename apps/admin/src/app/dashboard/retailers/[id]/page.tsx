@@ -1,20 +1,35 @@
 "use client";
 
 import { use, useState } from "react";
-import { useRetailerProfile, useUpdateRetailerStatus, useUnlockRetailerAccount } from "@/hooks/useRetailers";
+import { 
+  useRetailerProfile, 
+  useUpdateRetailerStatus, 
+  useUnlockRetailerAccount, 
+  useUpdateRetailerAccountType,
+  useResetRetailerSecurity,
+  useRevokeRetailerSessions,
+  useDeleteRetailer
+} from "@/hooks/useRetailers";
 import { useUpdateKycStatus } from "@/hooks/useKyc";
 import { 
   ArrowLeft, Ban, CheckCircle, Wallet, FileText, Building, MapPin, ReceiptText, 
   Phone, Mail, CreditCard, ShieldCheck, Clock, Download, Eye, AlertCircle, Plus, 
   Minus, Send, RefreshCw, Key, Lock, Unlock, Loader2, Copy, Check, Search, Activity, Smartphone, 
   Sparkles, X, TrendingUp, IndianRupee, ArrowUpRight, ArrowDownRight, SmartphoneNfc, 
-  MoreVertical, Edit, User, Fingerprint, Calendar, Zap
+  MoreVertical, Edit, User, Fingerprint, Calendar, Zap, Layers, Trash2, LogOut, MessageSquare
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ManualAdjustmentModal } from "@/components/retailer/ManualAdjustmentModal";
+import { EditRetailerModal } from "@/components/retailers/EditRetailerModal";
+import { SendPushModal } from "@/components/retailers/SendPushModal";
+import { SendSmsModal } from "@/components/retailers/SendSmsModal";
+import { TransactionDetailModal } from "@/components/retailers/TransactionDetailModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AccountTypeBadge } from "@/components/ui/account-type-badge";
+import { toast } from "sonner";
+import api from "@/lib/api";
 
 export default function RetailerProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -22,41 +37,80 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
   const router = useRouter();
 
   // Queries & Mutations
-  const { data: retailerData, isLoading, isError, refetch } = useRetailerProfile(id);
+  const { data: retailerData, isLoading, isError, refetch, isFetching } = useRetailerProfile(id);
   const { mutate: updateStatus, isPending: isUpdatingStatus } = useUpdateRetailerStatus();
   const { mutate: unlockAccount, isPending: isUnlocking } = useUnlockRetailerAccount();
   const { mutate: updateKycStatus, isPending: isUpdatingKyc } = useUpdateKycStatus();
+  const { mutate: updateAccountType, isPending: isUpdatingAccType } = useUpdateRetailerAccountType();
+  const resetSecurityMutation = useResetRetailerSecurity();
+  const revokeSessionsMutation = useRevokeRetailerSessions();
+  const deleteRetailerMutation = useDeleteRetailer();
 
-  // Modal & Tab States
+  // Modal States
   const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState(false);
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
+  const [isAccountTypeModalOpen, setIsAccountTypeModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isPushModalOpen, setIsPushModalOpen] = useState(false);
+  const [isSmsModalOpen, setIsSmsModalOpen] = useState(false);
+  const [isResetSecurityModalOpen, setIsResetSecurityModalOpen] = useState(false);
+  const [isRevokeSessionsModalOpen, setIsRevokeSessionsModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDropdownMenuOpen, setIsDropdownMenuOpen] = useState(false);
+  const [selectedTxn, setSelectedTxn] = useState<any | null>(null);
+
+  const [targetAccountType, setTargetAccountType] = useState<"PERSONAL" | "BUSINESS">("PERSONAL");
   const [adjustmentType, setAdjustmentType] = useState<"credit" | "debit">("credit");
-  const [previewDoc, setPreviewDoc] = useState<{ title: string; url: string } | null>(null);
-  const [notificationModalOpen, setNotificationModalOpen] = useState(false);
-  const [notificationMsg, setNotificationMsg] = useState("");
   const [activeTab, setActiveTab] = useState<"overview" | "transactions" | "timeline">("overview");
 
-  // Table Filtering
+  // Table Filtering & Copy
   const [txnSearch, setTxnSearch] = useState("");
   const [txnStatusFilter, setTxnStatusFilter] = useState("all");
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
-
-  const showToast = (msg: string) => {
-    setActionSuccessMsg(msg);
-    setTimeout(() => setActionSuccessMsg(null), 4000);
-  };
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     setCopiedId(text);
-    showToast(`${label} copied`);
+    toast.success(`${label} copied to clipboard`);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleRefresh = async () => {
+    try {
+      await refetch();
+      toast.success("Retailer profile refreshed");
+    } catch (err: any) {
+      toast.error("Failed to refresh profile");
+    }
   };
 
   const handleOpenAdjustment = (type: "credit" | "debit") => {
     setAdjustmentType(type);
     setIsAdjustmentModalOpen(true);
+  };
+
+  const handleCheckTxnStatus = async (orderId: string) => {
+    try {
+      toast.info(`Checking status for ${orderId}...`);
+      await api.post(`/admin/recharges/${orderId}/action`, { action: 'CHECK_STATUS' });
+      toast.success('Status checked successfully');
+      refetch();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || err.message || 'Failed to check status');
+    }
+  };
+
+  const handleRefundTxn = async (orderId: string) => {
+    try {
+      if (!confirm(`Are you sure you want to refund transaction ${orderId}?`)) return;
+      toast.info(`Processing refund for ${orderId}...`);
+      await api.post(`/admin/recharges/${orderId}/action`, { action: 'REFUND', reason: 'Admin manual refund' });
+      toast.success('Refund processed successfully');
+      setSelectedTxn(null);
+      refetch();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || err.message || 'Failed to process refund');
+    }
   };
 
   if (isLoading) {
@@ -98,7 +152,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
     const matchesSearch = !txnSearch || 
       (txn.referenceId && txn.referenceId.toLowerCase().includes(txnSearch.toLowerCase())) ||
       (txn.operatorName && txn.operatorName.toLowerCase().includes(txnSearch.toLowerCase()));
-    const matchesStatus = txnStatusFilter === 'all' || txn.status === txnStatusFilter;
+    const matchesStatus = txnStatusFilter === 'all' || (txn.status || '').toUpperCase() === txnStatusFilter.toUpperCase();
     return matchesSearch && matchesStatus;
   });
 
@@ -106,7 +160,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
   const insights = [];
   if (isLocked) insights.push({ type: 'error', text: '🔒 Account Locked' });
   if (business.successRate > 95 && business.monthlyRechargePaise > 1000000) insights.push({ type: 'success', text: 'Top Performing Retailer' });
-  if (walletBalance < 500) insights.push({ type: 'warning', text: 'Wallet Balance Running Low' });
+  if (walletBalance < 500 && retailer.accountType === 'BUSINESS') insights.push({ type: 'warning', text: 'Wallet Balance Running Low' });
   if (business.successRate < 70 && business.failedRecharges > 5) insights.push({ type: 'error', text: 'High Failure Rate Detected' });
   if (retailer.kycStatus === 'pending') insights.push({ type: 'warning', text: 'Pending KYC Verification' });
   if (insights.length === 0) insights.push({ type: 'neutral', text: 'Normal Activity Levels' });
@@ -114,14 +168,6 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-24 animate-in fade-in duration-500">
       
-      {/* Toast Banner */}
-      {actionSuccessMsg && (
-        <div className="fixed top-6 right-6 z-50 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-2xl border border-slate-800 flex items-center gap-3">
-          <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
-          <span className="text-sm font-medium">{actionSuccessMsg}</span>
-        </div>
-      )}
-
       {/* Breadcrumbs */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm text-slate-500 font-medium">
@@ -144,6 +190,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{retailer.name}</h1>
+              <AccountTypeBadge type={retailer.accountType} size="md" />
               {isLocked ? (
                 <div className="flex items-center gap-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 px-3 py-1 rounded-full font-bold text-xs shadow-sm uppercase tracking-wider">
                   <Lock className="w-3.5 h-3.5" /> Locked
@@ -163,39 +210,82 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                 <span className="font-mono bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-slate-700 dark:text-slate-300">ID: {retailer.retailerId}</span>
                 <button onClick={() => copyToClipboard(retailer.retailerId, "ID")}><Copy className="w-3.5 h-3.5 hover:text-primary" /></button>
               </div>
-              <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-slate-400" /> {retailer.phone}</div>
+              <div className="flex items-center gap-2">
+                <Phone className="w-4 h-4 text-slate-400" /> {retailer.phone}
+                <button onClick={() => copyToClipboard(retailer.phone, "Phone")}><Copy className="w-3.5 h-3.5 hover:text-primary" /></button>
+              </div>
               <div className="flex items-center gap-2"><Building className="w-4 h-4 text-slate-400" /> {retailer.shopName || 'No Shop Name'}</div>
               <div className="flex items-center gap-2"><MapPin className="w-4 h-4 text-slate-400" /> {retailer.city || 'Location N/A'}</div>
             </div>
             
             <div className="flex flex-wrap items-center gap-6 text-xs text-slate-500 pt-1">
               <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Member Since: {new Date(retailer.createdAt).toLocaleDateString('en-IN')}</div>
-              <div className="flex items-center gap-1.5"><Smartphone className="w-3.5 h-3.5" /> Last Login: 2 hours ago</div>
-              <div className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Last Recharge: 15 mins ago</div>
+              <div className="flex items-center gap-1.5"><Smartphone className="w-3.5 h-3.5" /> App Version: v1.2.4</div>
+              <div className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Successful Recharges: {business.successfulRecharges || 0}</div>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 z-10 self-start lg:self-center">
-          <Button onClick={() => refetch()} variant="outline" className="h-10 bg-white dark:bg-slate-900">
-            <RefreshCw className="w-4 h-4 mr-2 text-slate-500" /> Refresh
+        <div className="flex flex-wrap items-center gap-3 z-10 self-start lg:self-center relative">
+          <Button onClick={handleRefresh} disabled={isFetching} variant="outline" className="h-10 bg-white dark:bg-slate-900 font-semibold">
+            <RefreshCw className={`w-4 h-4 mr-2 text-slate-500 ${isFetching ? 'animate-spin' : ''}`} /> Refresh
           </Button>
-          <Button variant="outline" className="h-10 bg-white dark:bg-slate-900">
+          <Button onClick={() => setIsEditModalOpen(true)} variant="outline" className="h-10 bg-white dark:bg-slate-900 font-semibold">
             <Edit className="w-4 h-4 mr-2 text-slate-500" /> Edit Profile
           </Button>
-          <Button variant="outline" size="icon" className="h-10 w-10 bg-white dark:bg-slate-900">
-            <MoreVertical className="w-4 h-4 text-slate-500" />
-          </Button>
+          
+          {/* Three Dot Dropdown Menu */}
+          <div className="relative">
+            <Button onClick={() => setIsDropdownMenuOpen(!isDropdownMenuOpen)} variant="outline" size="icon" className="h-10 w-10 bg-white dark:bg-slate-900">
+              <MoreVertical className="w-4 h-4 text-slate-500" />
+            </Button>
+
+            {isDropdownMenuOpen && (
+              <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-50 p-2 space-y-1">
+                <button onClick={() => { setIsDropdownMenuOpen(false); setIsEditModalOpen(true); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl flex items-center gap-2">
+                  <Edit className="w-4 h-4 text-indigo-500" /> Edit Retailer Profile
+                </button>
+                {isLocked && (
+                  <button onClick={() => { setIsDropdownMenuOpen(false); setIsUnlockModalOpen(true); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-xl flex items-center gap-2">
+                    <Unlock className="w-4 h-4" /> Unlock Account
+                  </button>
+                )}
+                {retailer.accountType === 'BUSINESS' && (
+                  <button onClick={() => { setIsDropdownMenuOpen(false); handleOpenAdjustment('credit'); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-blue-500" /> Adjust Wallet Balance
+                  </button>
+                )}
+                <button onClick={() => { setIsDropdownMenuOpen(false); setIsResetSecurityModalOpen(true); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl flex items-center gap-2">
+                  <Key className="w-4 h-4 text-amber-500" /> Reset Password & MPIN
+                </button>
+                <button onClick={() => { setIsDropdownMenuOpen(false); setIsRevokeSessionsModalOpen(true); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl flex items-center gap-2">
+                  <LogOut className="w-4 h-4 text-purple-500" /> Revoke Active Sessions
+                </button>
+                {retailer.status === 'active' ? (
+                  <button onClick={() => { setIsDropdownMenuOpen(false); updateStatus({ id: retailer._id, status: 'suspended' }, { onSuccess: () => { toast.success('Account suspended'); refetch(); } }); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl flex items-center gap-2">
+                    <Ban className="w-4 h-4" /> Suspend Account
+                  </button>
+                ) : (
+                  <button onClick={() => { setIsDropdownMenuOpen(false); updateStatus({ id: retailer._id, status: 'active' }, { onSuccess: () => { toast.success('Account activated'); refetch(); } }); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-xl flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" /> Activate Account
+                  </button>
+                )}
+                <button onClick={() => { setIsDropdownMenuOpen(false); setIsDeleteModalOpen(true); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl flex items-center gap-2 border-t border-slate-100 dark:border-slate-800 pt-2">
+                  <Trash2 className="w-4 h-4" /> Delete Account
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* 12. AI INSIGHTS */}
+      {/* AI INSIGHTS */}
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm font-bold flex items-center gap-2 text-slate-700 dark:text-slate-300">
           <Sparkles className="w-4 h-4 text-amber-500" /> Insights:
         </span>
         {insights.map((insight, i) => (
-          <Badge key={i} variant={insight.type as any} className="px-3 py-1 bg-opacity-10 dark:bg-opacity-20 border shadow-sm">
+          <Badge key={i} variant={insight.type as any} className="px-3 py-1 bg-opacity-10 dark:bg-opacity-20 border shadow-sm font-medium">
             {insight.text}
           </Badge>
         ))}
@@ -209,7 +299,9 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
             Available Wallet <Wallet className="w-4 h-4 text-indigo-500" />
           </div>
-          <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">₹{walletBalance.toFixed(2)}</div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
+            {retailer.accountType === 'PERSONAL' ? '—' : `₹${walletBalance.toFixed(2)}`}
+          </div>
         </div>
 
         {/* Today's Recharge */}
@@ -225,7 +317,9 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
             Hold Amount <Lock className="w-4 h-4 text-amber-500" />
           </div>
-          <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">₹{onHoldBalance.toFixed(2)}</div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
+            {retailer.accountType === 'PERSONAL' ? '—' : `₹${onHoldBalance.toFixed(2)}`}
+          </div>
         </div>
 
         {/* Company Profit */}
@@ -235,10 +329,10 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
             Company Profit <IndianRupee className="w-4 h-4" />
           </div>
           <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 font-mono z-10 relative">
-            ₹{((business.lifetimeCompanyProfit || 0) / 100).toFixed(2)}
+            ₹{(business.lifetimeCompanyProfit || 0).toFixed(2)}
           </div>
           <div className="text-[10px] font-bold text-emerald-600/70 dark:text-emerald-400/70 z-10 relative">
-            Today: +₹{((business.todaysCompanyProfit || 0) / 100).toFixed(2)}
+            Today: +₹{(business.todaysCompanyProfit || 0).toFixed(2)}
           </div>
         </div>
 
@@ -269,56 +363,71 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             
             {/* 3. WALLET SECTION */}
-            <div className="bg-slate-900 rounded-3xl p-6 shadow-xl border border-slate-800 text-white relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full blur-2xl" />
-              <div className="flex items-center gap-2 mb-6 text-slate-300">
-                <Wallet className="w-5 h-5 text-blue-400" />
-                <h3 className="font-bold">Wallet Management</h3>
-              </div>
-              
-              <div className="flex justify-between items-end mb-6">
-                <div>
-                  <p className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-1">Available Balance</p>
-                  <p className="text-4xl font-black font-mono">₹{walletBalance.toFixed(2)}</p>
+            {retailer.accountType === 'PERSONAL' ? (
+              <div className="bg-slate-900 rounded-3xl p-6 shadow-xl border border-slate-800 text-white relative overflow-hidden">
+                <div className="flex items-center gap-2 mb-4 text-slate-300">
+                  <Wallet className="w-5 h-5 text-slate-400" />
+                  <h3 className="font-bold">Wallet Management</h3>
                 </div>
-                <div className="text-right">
-                  <p className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-1">Hold Balance</p>
-                  <p className="text-lg font-bold font-mono text-amber-400">₹{onHoldBalance.toFixed(2)}</p>
+                <div className="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-4 space-y-2">
+                  <p className="text-sm font-semibold text-slate-200">Personal Account (No Wallet)</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Personal accounts process recharges directly without a retailer wallet balance. Wallet adjustments are not applicable.
+                  </p>
                 </div>
               </div>
-
-              <div className="grid grid-cols-2 gap-4 py-4 border-y border-slate-800/60 mb-6">
-                <div className="space-y-3">
+            ) : (
+              <div className="bg-slate-900 rounded-3xl p-6 shadow-xl border border-slate-800 text-white relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full blur-2xl" />
+                <div className="flex items-center gap-2 mb-6 text-slate-300">
+                  <Wallet className="w-5 h-5 text-blue-400" />
+                  <h3 className="font-bold">Wallet Management</h3>
+                </div>
+                
+                <div className="flex justify-between items-end mb-6">
                   <div>
-                    <p className="text-[10px] text-slate-500 uppercase font-bold">Today's Credit</p>
-                    <p className="text-sm font-bold font-mono text-emerald-400">+₹{((wallet.todaysCredit || 0) / 100).toFixed(2)}</p>
+                    <p className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-1">Available Balance</p>
+                    <p className="text-4xl font-black font-mono">₹{walletBalance.toFixed(2)}</p>
                   </div>
-                  <div>
-                    <p className="text-[10px] text-slate-500 uppercase font-bold">Lifetime Credit</p>
-                    <p className="text-sm font-bold font-mono">+₹{((wallet.lifetimeCredit || 0) / 100).toFixed(2)}</p>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div className="bg-[#FF5A5F]/15 px-3 py-2 rounded-lg border border-[#FF5A5F]/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
-                    <p className="text-[10px] text-[#FF5A5F] font-black uppercase tracking-wider mb-0.5">Today's Debit</p>
-                    <p className="text-[15px] font-black font-mono text-[#FF5A5F] drop-shadow-md">-₹{((wallet.todaysDebit || 0) / 100).toFixed(2)}</p>
-                  </div>
-                  <div className="px-3">
-                    <p className="text-[10px] text-slate-500 uppercase font-bold">Lifetime Debit</p>
-                    <p className="text-sm font-black font-mono text-[#FF5A5F] opacity-90">-₹{((wallet.lifetimeDebit || 0) / 100).toFixed(2)}</p>
+                  <div className="text-right">
+                    <p className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-1">Hold Balance</p>
+                    <p className="text-lg font-bold font-mono text-amber-400">₹{onHoldBalance.toFixed(2)}</p>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-3">
-                <Button onClick={() => handleOpenAdjustment("credit")} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl">
-                  <ArrowDownRight className="w-4 h-4 mr-1.5" /> Credit
-                </Button>
-                <Button onClick={() => handleOpenAdjustment("debit")} variant="outline" className="flex-1 border-slate-700 hover:bg-slate-800 text-white font-bold h-11 rounded-xl">
-                  <ArrowUpRight className="w-4 h-4 mr-1.5" /> Debit
-                </Button>
+                <div className="grid grid-cols-2 gap-4 py-4 border-y border-slate-800/60 mb-6">
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase font-bold">Today's Credit</p>
+                      <p className="text-sm font-bold font-mono text-emerald-400">+₹{((wallet.todaysCredit || 0) / 100).toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase font-bold">Lifetime Credit</p>
+                      <p className="text-sm font-bold font-mono">+₹{((wallet.lifetimeCredit || 0) / 100).toFixed(2)}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="bg-[#FF5A5F]/15 px-3 py-2 rounded-lg border border-[#FF5A5F]/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
+                      <p className="text-[10px] text-[#FF5A5F] font-black uppercase tracking-wider mb-0.5">Today's Debit</p>
+                      <p className="text-[15px] font-black font-mono text-[#FF5A5F] drop-shadow-md">-₹{((wallet.todaysDebit || 0) / 100).toFixed(2)}</p>
+                    </div>
+                    <div className="px-3">
+                      <p className="text-[10px] text-slate-500 uppercase font-bold">Lifetime Debit</p>
+                      <p className="text-sm font-black font-mono text-[#FF5A5F] opacity-90">-₹{((wallet.lifetimeDebit || 0) / 100).toFixed(2)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Button onClick={() => handleOpenAdjustment("credit")} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl">
+                    <ArrowDownRight className="w-4 h-4 mr-1.5" /> Credit
+                  </Button>
+                  <Button onClick={() => handleOpenAdjustment("debit")} variant="outline" className="flex-1 border-slate-700 hover:bg-slate-800 text-white font-bold h-11 rounded-xl">
+                    <ArrowUpRight className="w-4 h-4 mr-1.5" /> Debit
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* 4. BUSINESS PERFORMANCE */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
@@ -358,15 +467,15 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                 <div className="pt-2 space-y-3">
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-500">Provider Comm. Received</span>
-                    <span className="font-bold font-mono text-indigo-600">₹{((business.lifetimeProviderCommission || 0) / 100).toFixed(2)}</span>
+                    <span className="font-bold font-mono text-indigo-600">₹{(business.lifetimeProviderCommission || 0).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-500">Retailer Comm. Paid</span>
-                    <span className="font-bold font-mono text-rose-500">-₹{((business.lifetimeRetailerCommission || 0) / 100).toFixed(2)}</span>
+                    <span className="font-bold font-mono text-rose-500">-₹{(business.lifetimeRetailerCommission || 0).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm font-bold pt-2 border-t border-dashed border-slate-200 dark:border-slate-700">
                     <span className="text-slate-700 dark:text-slate-300">Net Company Profit</span>
-                    <span className="font-mono text-emerald-600 tracking-wide">₹{((business.lifetimeCompanyProfit || 0) / 100).toFixed(2)}</span>
+                    <span className="font-mono text-emerald-600 tracking-wide">₹{(business.lifetimeCompanyProfit || 0).toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -381,7 +490,14 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                 <ReceiptText className="w-5 h-5 text-indigo-500" />
                 <h3 className="font-bold text-slate-900 dark:text-white">Recent Transactions</h3>
               </div>
-              <Button variant="outline" size="sm" className="h-9 rounded-xl">View Full Ledger</Button>
+              <Button 
+                onClick={() => router.push(`/dashboard/transactions?retailer=${retailer.retailerId || retailer._id}`)} 
+                variant="outline" 
+                size="sm" 
+                className="h-9 rounded-xl font-bold"
+              >
+                View Full Ledger
+              </Button>
             </div>
             
             <div className="overflow-x-auto">
@@ -397,36 +513,68 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                  {filteredTransactions.slice(0, 5).map((txn: any) => (
-                    <tr key={txn._id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="py-3">
-                        <div className="font-mono font-bold text-slate-900 dark:text-white">{txn.referenceId || txn._id.slice(-8)}</div>
-                        <div className="text-[11px] text-slate-500">{new Date(txn.createdAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' })}</div>
-                      </td>
-                      <td className="py-3">
-                        <div className="font-semibold text-slate-900 dark:text-white text-xs">{txn.operatorName || 'Recharge'}</div>
-                        <div className="text-[10px] text-slate-500 uppercase">{txn.service || 'mobile'}</div>
-                      </td>
-                      <td className="py-3 text-right font-mono font-bold text-slate-900 dark:text-white">
-                        ₹{((txn.amountPaise || 0) / 100).toFixed(2)}
-                      </td>
-                      <td className="py-3 text-center">
-                        <Badge variant={txn.status === 'success' ? 'success' : txn.status === 'failed' ? 'error' : 'warning'} className="text-[10px] uppercase">
-                          {txn.status}
-                        </Badge>
-                      </td>
-                      <td className="py-3 text-right">
-                        <div className="text-[11px] text-slate-500 font-mono">Ret: ₹{((txn.commissionEarnedPaise || 0) / 100).toFixed(2)}</div>
-                        <div className="font-mono text-xs font-bold text-emerald-600">Profit: ??</div>
-                      </td>
-                      <td className="py-3 text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {txn.status === 'pending' && <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 rounded">Check Status</Button>}
-                          {txn.status === 'success' && <Button size="sm" variant="outline" className="h-7 text-[10px] px-2 rounded text-rose-500 hover:text-rose-600">Refund</Button>}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredTransactions.slice(0, 5).map((txn: any) => {
+                    const normStatus = (txn.status || '').toUpperCase();
+                    const txnAmount = txn.amountPaise ? (txn.amountPaise / 100) : (txn.amount || 0);
+                    const retComm = txn.retailerCommissionAmount ?? (txn.commissionEarnedPaise ? txn.commissionEarnedPaise / 100 : 0);
+                    const companyProfit = txn.companyProfitAmount || 0;
+
+                    return (
+                      <tr 
+                        key={txn._id} 
+                        onClick={() => setSelectedTxn(txn)} 
+                        className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
+                      >
+                        <td className="py-3">
+                          <div className="font-mono font-bold text-slate-900 dark:text-white">{txn.referenceId || txn.orderId || txn._id.slice(-8)}</div>
+                          <div className="text-[11px] text-slate-500">{new Date(txn.createdAt).toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' })}</div>
+                        </td>
+                        <td className="py-3">
+                          <div className="font-semibold text-slate-900 dark:text-white text-xs">{txn.operatorName || txn.internalOperatorName || 'Recharge'}</div>
+                          <div className="text-[10px] text-slate-500 uppercase">{txn.serviceType || txn.service || 'mobile'}</div>
+                        </td>
+                        <td className="py-3 text-right font-mono font-bold text-slate-900 dark:text-white">
+                          ₹{txnAmount.toFixed(2)}
+                        </td>
+                        <td className="py-3 text-center">
+                          <Badge 
+                            variant={normStatus === 'SUCCESS' ? 'success' : normStatus === 'FAILED' ? 'error' : 'warning'} 
+                            className="text-[10px] uppercase"
+                          >
+                            {normStatus}
+                          </Badge>
+                        </td>
+                        <td className="py-3 text-right">
+                          <div className="text-[11px] text-slate-500 font-mono">Ret: ₹{retComm.toFixed(2)}</div>
+                          <div className="font-mono text-xs font-bold text-emerald-600">Profit: ₹{companyProfit.toFixed(2)}</div>
+                        </td>
+                        <td className="py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {normStatus === 'PENDING' && (
+                              <Button 
+                                onClick={() => handleCheckTxnStatus(txn.orderId || txn.referenceId)} 
+                                size="sm" 
+                                variant="outline" 
+                                className="h-7 text-[10px] px-2 rounded font-bold"
+                              >
+                                Check Status
+                              </Button>
+                            )}
+                            {normStatus === 'SUCCESS' && (
+                              <Button 
+                                onClick={() => handleRefundTxn(txn.orderId || txn.referenceId)} 
+                                size="sm" 
+                                variant="outline" 
+                                className="h-7 text-[10px] px-2 rounded text-rose-500 hover:text-rose-600 font-bold"
+                              >
+                                Refund
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {filteredTransactions.length === 0 && (
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-slate-500">No recent transactions</td>
@@ -500,32 +648,9 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
               </div>
 
               <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800/60">
-                <span className="text-slate-500 font-semibold uppercase text-[11px]">Lock Time</span>
-                <span className="font-mono text-slate-900 dark:text-white">
-                  {retailer.lockTime ? new Date(retailer.lockTime).toLocaleString('en-IN') : (isLocked ? 'Recent' : 'N/A')}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800/60">
-                <span className="text-slate-500 font-semibold uppercase text-[11px]">Unlock Time</span>
-                <span className="font-mono text-slate-900 dark:text-white">
-                  {retailer.lockUntil ? new Date(retailer.lockUntil).toLocaleString('en-IN') : 'N/A'}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800/60">
                 <span className="text-slate-500 font-semibold uppercase text-[11px]">Failed Attempt Count</span>
                 <span className="font-mono font-bold text-amber-600 dark:text-amber-400 text-sm">
                   {(retailer.failedMpinAttempts || 0) + (retailer.failedLoginAttempts || 0)}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center pb-2">
-                <span className="text-slate-500 font-semibold uppercase text-[11px]">Remaining Lock Duration</span>
-                <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
-                  {isLocked && retailer.lockUntil 
-                    ? `${Math.max(0, Math.ceil((new Date(retailer.lockUntil).getTime() - Date.now()) / 60000))} mins`
-                    : 'None'}
                 </span>
               </div>
 
@@ -543,7 +668,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
             </div>
           </div>
 
-          {/* 11. QUICK ACTIONS */}
+          {/* QUICK ACTIONS */}
           <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-6">
             <h3 className="font-bold text-slate-900 dark:text-white text-sm uppercase tracking-wider flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-primary" /> Quick Actions
@@ -553,11 +678,11 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
               <div className="space-y-2">
                 <p className="text-xs font-bold text-slate-500 uppercase">Communication</p>
                 <div className="flex gap-2">
-                  <Button onClick={() => setNotificationModalOpen(true)} size="sm" variant="outline" className="flex-1 bg-white dark:bg-slate-950 rounded-xl">
+                  <Button onClick={() => setIsPushModalOpen(true)} size="sm" variant="outline" className="flex-1 bg-white dark:bg-slate-950 rounded-xl font-bold">
                     <Send className="w-3.5 h-3.5 mr-1.5 text-blue-500" /> Push
                   </Button>
-                  <Button size="sm" variant="outline" className="flex-1 bg-white dark:bg-slate-950 rounded-xl">
-                    <Mail className="w-3.5 h-3.5 mr-1.5 text-amber-500" /> SMS
+                  <Button onClick={() => setIsSmsModalOpen(true)} size="sm" variant="outline" className="flex-1 bg-white dark:bg-slate-950 rounded-xl font-bold">
+                    <MessageSquare className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> SMS
                   </Button>
                 </div>
               </div>
@@ -570,18 +695,18 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                       <Unlock className="w-3.5 h-3.5 mr-1.5" /> Unlock Account
                     </Button>
                   )}
-                  <Button size="sm" variant="outline" className="bg-white dark:bg-slate-950 rounded-xl">
-                    <Key className="w-3.5 h-3.5 mr-1.5 text-slate-600" /> Reset Pass
+                  <Button onClick={() => setIsResetSecurityModalOpen(true)} size="sm" variant="outline" className="bg-white dark:bg-slate-950 rounded-xl font-bold">
+                    <Key className="w-3.5 h-3.5 mr-1.5 text-amber-500" /> Reset Pass
                   </Button>
-                  <Button size="sm" variant="outline" className="bg-white dark:bg-slate-950 rounded-xl">
-                    <Lock className="w-3.5 h-3.5 mr-1.5 text-slate-600" /> Logout
+                  <Button onClick={() => setIsRevokeSessionsModalOpen(true)} size="sm" variant="outline" className="bg-white dark:bg-slate-950 rounded-xl font-bold">
+                    <LogOut className="w-3.5 h-3.5 mr-1.5 text-purple-500" /> Logout
                   </Button>
                   {retailer.status === 'active' ? (
-                    <Button onClick={() => updateStatus({ id: retailer._id, status: "suspended" })} size="sm" variant="outline" className="col-span-2 border-rose-200 text-rose-600 hover:bg-rose-50 bg-white dark:bg-slate-950 rounded-xl">
+                    <Button onClick={() => updateStatus({ id: retailer._id, status: "suspended" }, { onSuccess: () => { toast.success('Account suspended'); refetch(); } })} size="sm" variant="outline" className="col-span-2 border-rose-200 text-rose-600 hover:bg-rose-50 bg-white dark:bg-slate-950 rounded-xl font-bold">
                       <Ban className="w-3.5 h-3.5 mr-1.5" /> Suspend Account
                     </Button>
                   ) : (
-                    <Button onClick={() => updateStatus({ id: retailer._id, status: "active" })} size="sm" variant="outline" className="col-span-2 border-emerald-200 text-emerald-600 hover:bg-emerald-50 bg-white dark:bg-slate-950 rounded-xl">
+                    <Button onClick={() => updateStatus({ id: retailer._id, status: "active" }, { onSuccess: () => { toast.success('Account activated'); refetch(); } })} size="sm" variant="outline" className="col-span-2 border-emerald-200 text-emerald-600 hover:bg-emerald-50 bg-white dark:bg-slate-950 rounded-xl font-bold">
                       <CheckCircle className="w-3.5 h-3.5 mr-1.5" /> Activate Account
                     </Button>
                   )}
@@ -590,7 +715,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
             </div>
           </div>
 
-          {/* 10. KYC SECTION */}
+          {/* KYC CHECKLIST SECTION */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -621,12 +746,30 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
             </div>
           </div>
 
-          {/* 8. BUSINESS PROFILE */}
+          {/* BUSINESS PROFILE */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
-            <h3 className="font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-              <User className="w-5 h-5 text-indigo-500" /> Identity Details
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <User className="w-5 h-5 text-indigo-500" /> Retailer Information
+              </h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setTargetAccountType(retailer.accountType === "BUSINESS" ? "PERSONAL" : "BUSINESS");
+                  setIsAccountTypeModalOpen(true);
+                }}
+                className="h-8 text-xs font-bold rounded-xl border-slate-200 hover:bg-slate-50"
+              >
+                <Edit className="w-3.5 h-3.5 mr-1" /> Change Account Type
+              </Button>
+            </div>
+            
             <div className="space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
+                <span className="text-xs font-semibold text-slate-500 uppercase">Account Type</span>
+                <AccountTypeBadge type={retailer.accountType} size="sm" />
+              </div>
               <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-2">
                 <span className="text-xs font-semibold text-slate-500 uppercase">PAN</span>
                 <span className="font-mono font-bold text-sm">{retailer.panNumber || 'N/A'}</span>
@@ -642,7 +785,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
             </div>
           </div>
 
-          {/* 9. BANK DETAILS */}
+          {/* BANK DETAILS */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-slate-800">
             <h3 className="font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
               <CreditCard className="w-5 h-5 text-indigo-500" /> Settlement Bank
@@ -672,7 +815,33 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
         </div>
       </div>
       
-      {/* Modals... */}
+      {/* Interactive Modals */}
+      <EditRetailerModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        retailer={retailer}
+      />
+
+      <SendPushModal
+        isOpen={isPushModalOpen}
+        onClose={() => setIsPushModalOpen(false)}
+        retailer={retailer}
+      />
+
+      <SendSmsModal
+        isOpen={isSmsModalOpen}
+        onClose={() => setIsSmsModalOpen(false)}
+        retailer={retailer}
+      />
+
+      <TransactionDetailModal
+        isOpen={Boolean(selectedTxn)}
+        onClose={() => setSelectedTxn(null)}
+        transaction={selectedTxn}
+        onCheckStatus={handleCheckTxnStatus}
+        onRefund={handleRefundTxn}
+      />
+
       <ManualAdjustmentModal
         isOpen={isAdjustmentModalOpen}
         onClose={() => setIsAdjustmentModalOpen(false)}
@@ -681,7 +850,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
         defaultType={adjustmentType}
       />
 
-      {/* Unlock Retailer Account Confirmation Modal */}
+      {/* Unlock Account Confirmation Modal */}
       {isUnlockModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-md w-full rounded-[24px] shadow-2xl p-6 space-y-5">
@@ -715,12 +884,12 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                 onClick={() => {
                   unlockAccount(retailer._id, {
                     onSuccess: () => {
-                      showToast("Retailer account unlocked successfully.");
+                      toast.success("Retailer account unlocked successfully.");
                       setIsUnlockModalOpen(false);
                       refetch();
                     },
                     onError: (err: any) => {
-                      alert(err?.response?.data?.message || err.message || "Failed to unlock account");
+                      toast.error(err?.response?.data?.message || err.message || "Failed to unlock account");
                     }
                   });
                 }}
@@ -729,6 +898,225 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
               >
                 {isUnlocking ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Unlock className="w-4 h-4 mr-1.5" />}
                 Unlock Account
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Security Confirmation Modal */}
+      {isResetSecurityModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-md w-full rounded-[24px] shadow-2xl p-6 space-y-5">
+            <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Key className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">Reset Security Credentials</h3>
+                <p className="text-xs text-slate-500 font-medium">{retailer.name}</p>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
+              <p>Are you sure you want to reset security credentials and clear MPIN locks for this retailer?</p>
+              <p className="text-xs text-slate-500 font-medium">The retailer will be prompted to set a new MPIN on their next login attempt.</p>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsResetSecurityModalOpen(false)}
+                disabled={resetSecurityMutation.isPending}
+                className="h-10 px-4 font-semibold text-xs rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await resetSecurityMutation.mutateAsync(retailer._id);
+                    toast.success("Security credentials and MPIN reset successfully.");
+                    setIsResetSecurityModalOpen(false);
+                    refetch();
+                  } catch (err: any) {
+                    toast.error(err.response?.data?.message || err.message || "Failed to reset security");
+                  }
+                }}
+                disabled={resetSecurityMutation.isPending}
+                className="h-10 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-md"
+              >
+                {resetSecurityMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Key className="w-4 h-4 mr-1.5" />}
+                Reset Credentials
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revoke Sessions Confirmation Modal */}
+      {isRevokeSessionsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-md w-full rounded-[24px] shadow-2xl p-6 space-y-5">
+            <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="w-10 h-10 rounded-2xl bg-purple-100 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+                <LogOut className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">Revoke Active Sessions</h3>
+                <p className="text-xs text-slate-500 font-medium">{retailer.name}</p>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
+              <p>Are you sure you want to log out all active mobile sessions and invalidate device tokens for this retailer?</p>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsRevokeSessionsModalOpen(false)}
+                disabled={revokeSessionsMutation.isPending}
+                className="h-10 px-4 font-semibold text-xs rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await revokeSessionsMutation.mutateAsync(retailer._id);
+                    toast.success("Active sessions revoked successfully.");
+                    setIsRevokeSessionsModalOpen(false);
+                    refetch();
+                  } catch (err: any) {
+                    toast.error(err.response?.data?.message || err.message || "Failed to revoke sessions");
+                  }
+                }}
+                disabled={revokeSessionsMutation.isPending}
+                className="h-10 px-4 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-md"
+              >
+                {revokeSessionsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <LogOut className="w-4 h-4 mr-1.5" />}
+                Revoke Sessions
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Account Confirmation Modal */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-md w-full rounded-[24px] shadow-2xl p-6 space-y-5">
+            <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">Delete Retailer Account</h3>
+                <p className="text-xs text-slate-500 font-medium">{retailer.name} ({retailer.retailerId})</p>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
+              <p className="font-bold text-rose-600">This action will deactivate the retailer account and block future access.</p>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsDeleteModalOpen(false)}
+                disabled={deleteRetailerMutation.isPending}
+                className="h-10 px-4 font-semibold text-xs rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await deleteRetailerMutation.mutateAsync(retailer._id);
+                    toast.success("Retailer account deleted successfully.");
+                    setIsDeleteModalOpen(false);
+                    router.push('/dashboard/retailers');
+                  } catch (err: any) {
+                    toast.error(err.response?.data?.message || err.message || "Failed to delete account");
+                  }
+                }}
+                disabled={deleteRetailerMutation.isPending}
+                className="h-10 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-md"
+              >
+                {deleteRetailerMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1.5" />}
+                Confirm Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Account Type Confirmation Modal */}
+      {isAccountTypeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-md w-full rounded-[24px] shadow-2xl p-6 space-y-5">
+            <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">Confirm Account Type Change</h3>
+                <p className="text-xs text-slate-500 font-medium">{retailer.name} ({retailer.retailerId})</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+              <p className="font-bold text-rose-600 dark:text-rose-400 text-xs uppercase tracking-wider">
+                ⚠️ Warning: Changing account type affects commission calculation!
+              </p>
+              <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400 font-medium">
+                Switching this account from <span className="font-bold text-slate-900 dark:text-white">{retailer.accountType || "PERSONAL"}</span> to <span className="font-bold text-slate-900 dark:text-white">{targetAccountType}</span> will immediately change the commission slab applied to all future recharges performed by this retailer.
+              </p>
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs">
+                <span className="font-semibold text-slate-500">New Target Type:</span>
+                <AccountTypeBadge type={targetAccountType} size="sm" />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsAccountTypeModalOpen(false)}
+                disabled={isUpdatingAccType}
+                className="h-10 px-4 font-semibold text-xs rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  updateAccountType(
+                    { id: retailer._id, accountType: targetAccountType },
+                    {
+                      onSuccess: () => {
+                        toast.success(`Account type successfully changed to ${targetAccountType}`);
+                        setIsAccountTypeModalOpen(false);
+                        refetch();
+                      },
+                      onError: (err: any) => {
+                        toast.error(err?.response?.data?.message || err.message || "Failed to change account type");
+                      },
+                    }
+                  );
+                }}
+                disabled={isUpdatingAccType}
+                className="h-10 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-md"
+              >
+                {isUpdatingAccType ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                Confirm & Update Type
               </Button>
             </div>
           </div>

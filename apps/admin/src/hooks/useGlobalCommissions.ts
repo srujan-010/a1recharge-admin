@@ -3,6 +3,7 @@ import api from '@/lib/api';
 
 export interface GlobalCommission {
   _id: string | null;
+  accountType: 'PERSONAL' | 'BUSINESS';
   operatorCode: string;
   operatorName: string;
   serviceType: string;
@@ -13,12 +14,49 @@ export interface GlobalCommission {
   poStatus: boolean;
 }
 
-export function useGlobalCommissionsList() {
+export interface CommissionStats {
+  personalSlabs: number;
+  businessSlabs: number;
+  activeSlabs: number;
+  inactiveSlabs: number;
+  personalActive: number;
+  businessActive: number;
+}
+
+export interface CommissionsResponse {
+  success: boolean;
+  stats?: CommissionStats;
+  data: GlobalCommission[];
+}
+
+export function useGlobalCommissionsList(accountType = 'ALL') {
   return useQuery({
-    queryKey: ['globalCommissions'],
+    queryKey: ['globalCommissions', accountType],
     queryFn: async () => {
-      const { data } = await api.get('/admin/commissions');
-      return data.data as GlobalCommission[];
+      const { data } = await api.get<CommissionsResponse>('/admin/commissions', {
+        params: { accountType }
+      });
+      return data;
+    },
+  });
+}
+
+export function useCreateGlobalCommission() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      accountType: 'PERSONAL' | 'BUSINESS';
+      operatorCode: string;
+      operatorName?: string;
+      providerCommission: number;
+      retailerCommission: number;
+      status?: 'ACTIVE' | 'INACTIVE';
+    }) => {
+      const { data } = await api.post('/admin/commissions', payload);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['globalCommissions'] });
     },
   });
 }
@@ -31,7 +69,7 @@ export function useUpdateGlobalCommission() {
       payload
     }: {
       code: string;
-      payload: { providerCommission: number; retailerCommission: number; status?: 'ACTIVE' | 'INACTIVE'; operatorName?: string; }
+      payload: { providerCommission: number; retailerCommission: number; status?: 'ACTIVE' | 'INACTIVE'; operatorName?: string; accountType?: string; }
     }) => {
       const { data } = await api.put(`/admin/commissions/${code}`, payload);
       return data;

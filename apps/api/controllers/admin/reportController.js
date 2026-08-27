@@ -1,102 +1,121 @@
-const Transaction = require('../../models/Transaction');
-const WalletLedger = require('../../models/WalletLedger');
-const mongoose = require('mongoose');
+const FinancialSummaryService = require('../../services/financialSummary.service');
 
-// @desc    Generate Transaction Report (Aggregated by Date)
-// @route   GET /api/admin/reports/transactions
+// @desc    Get Master Financial & Business Executive Dashboard Report
+// @route   GET /api/admin/reports/dashboard
 // @access  Private (Admin / Finance)
-const generateTransactionReport = async (req, res, next) => {
+const getExecutiveDashboardReport = async (req, res, next) => {
   try {
-    const { startDate, endDate, showTest } = req.query;
+    const { startDate, endDate, period, accountType, showTest } = req.query;
 
-    const matchStage = {};
-    if (startDate || endDate) {
-      matchStage.createdAt = {};
-      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
-      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
-    }
-
-    if (showTest !== 'true') {
-      matchStage.isTest = { $ne: true };
-      matchStage.referenceId = { $not: /^TEST/i };
-    }
-
-    const report = await Transaction.aggregate([
-      { $match: matchStage },
-      {
-        $group: {
-          _id: {
-            date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-            status: "$status",
-            service: "$service"
-          },
-          totalCount: { $sum: 1 },
-          totalAmountPaise: { $sum: "$amountPaise" },
-          totalCommissionPaise: { $sum: "$commissionEarnedPaise" }
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          date: "$_id.date",
-          status: "$_id.status",
-          service: "$_id.service",
-          totalCount: 1,
-          totalAmountPaise: 1,
-          totalCommissionPaise: 1
-        }
-      },
-      { $sort: { date: -1, status: 1 } }
-    ]);
+    const data = await FinancialSummaryService.getExecutiveDashboardData({
+      startDate,
+      endDate,
+      period,
+      accountType,
+      showTest: showTest === 'true',
+    });
 
     res.status(200).json({
       success: true,
-      data: report,
+      data,
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Generate Ledger Report (Aggregated Credits vs Debits)
+// @desc    Generate Daily Financial Performance Report
+// @route   GET /api/admin/reports/daily
+// @access  Private (Admin / Finance)
+const getDailyReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate, period, accountType, showTest } = req.query;
+
+    const data = await FinancialSummaryService.getDailyPerformance({
+      startDate,
+      endDate,
+      period,
+      accountType,
+      showTest: showTest === 'true',
+    });
+
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Generate Operator Performance Report
+// @route   GET /api/admin/reports/operators
+// @access  Private (Admin / Finance)
+const getOperatorReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate, period, accountType, showTest } = req.query;
+
+    const data = await FinancialSummaryService.getOperatorPerformance({
+      startDate,
+      endDate,
+      period,
+      accountType,
+      showTest: showTest === 'true',
+    });
+
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Generate Commission Summary Report
+// @route   GET /api/admin/reports/commissions
+// @access  Private (Admin / Finance)
+const getCommissionReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate, period, accountType, showTest } = req.query;
+
+    const summary = await FinancialSummaryService.getFinancialSummary({
+      startDate,
+      endDate,
+      period,
+      accountType,
+      showTest: showTest === 'true',
+    });
+
+    const accountTypeBreakdown = await FinancialSummaryService.getAccountTypePerformance({
+      startDate,
+      endDate,
+      period,
+      showTest: showTest === 'true',
+    });
+
+    res.status(200).json({
+      success: true,
+      summary,
+      accountTypeBreakdown,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Generate Ledger Report (Consuming FinancialSummaryService)
 // @route   GET /api/admin/reports/ledger
 // @access  Private (Admin / Finance)
 const generateLedgerReport = async (req, res, next) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, period } = req.query;
 
-    const matchStage = {};
-    if (startDate || endDate) {
-      matchStage.createdAt = {};
-      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
-      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
-    }
-
-    const report = await WalletLedger.aggregate([
-      { $match: matchStage },
-      {
-        $group: {
-          _id: {
-            date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-            type: "$type",
-            transactionType: "$transactionType"
-          },
-          totalCount: { $sum: 1 },
-          totalAmountPaise: { $sum: "$amountPaise" }
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          date: "$_id.date",
-          type: "$_id.type",
-          transactionType: "$_id.transactionType",
-          totalCount: 1,
-          totalAmountPaise: 1
-        }
-      },
-      { $sort: { date: -1, type: 1 } }
-    ]);
+    const report = await FinancialSummaryService.getLedgerReport({
+      startDate,
+      endDate,
+      period,
+    });
 
     res.status(200).json({
       success: true,
@@ -108,6 +127,9 @@ const generateLedgerReport = async (req, res, next) => {
 };
 
 module.exports = {
-  generateTransactionReport,
-  generateLedgerReport
+  getExecutiveDashboardReport,
+  getDailyReport,
+  getOperatorReport,
+  getCommissionReport,
+  generateLedgerReport,
 };

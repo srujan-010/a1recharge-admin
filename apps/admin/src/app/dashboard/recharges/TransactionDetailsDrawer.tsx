@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Loader2, Clock, Smartphone, Wallet, Server, ShieldAlert, History, Activity, FileJson } from 'lucide-react';
 import { useRechargeDetails } from '@/hooks/useTransactions';
 import { Badge } from '@/components/ui/badge';
+import { AccountTypeBadge } from '@/components/ui/account-type-badge';
 
 export function TransactionDetailsDrawer({ orderId, onClose }: { orderId: string | null, onClose: () => void }) {
   const { data, isLoading } = useRechargeDetails(orderId || '');
@@ -49,6 +50,10 @@ export function TransactionDetailsDrawer({ orderId, onClose }: { orderId: string
                       data.recharge.status === 'FAILED' ? 'error' :
                       data.recharge.status === 'REFUNDED' ? 'warning' : 'info'
                     } className="uppercase">{data.recharge.status}</Badge>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Account Type</p>
+                    <AccountTypeBadge type={data.recharge.accountType || data.recharge.userId?.accountType} size="sm" />
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Recharge Amount</p>

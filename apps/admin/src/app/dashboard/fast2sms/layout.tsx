@@ -17,10 +17,10 @@ export default function Fast2SMSLayout({
 
   const tabs = [
     { name: "Dashboard", href: "/dashboard/fast2sms", icon: LayoutDashboard },
-    { name: "Wallet", href: "/dashboard/fast2sms/wallet", icon: Wallet },
-    { name: "WhatsApp", href: "/dashboard/fast2sms/whatsapp", icon: MessageSquare },
-    { name: "Templates", href: "/dashboard/fast2sms/templates", icon: LayoutTemplate },
     { name: "Compose", href: "/dashboard/fast2sms/send", icon: Send },
+    { name: "Templates", href: "/dashboard/fast2sms/templates", icon: LayoutTemplate },
+    { name: "WhatsApp", href: "/dashboard/fast2sms/whatsapp", icon: MessageSquare },
+    { name: "Wallet", href: "/dashboard/fast2sms/wallet", icon: Wallet },
     { name: "Campaigns", href: "/dashboard/fast2sms/campaigns", icon: History },
     { name: "Wallet Transactions", href: "/dashboard/fast2sms/wallet-transactions", icon: Wallet },
     { name: "Logs", href: "/dashboard/fast2sms/logs", icon: ScrollText },
@@ -30,25 +30,27 @@ export default function Fast2SMSLayout({
 
   return (
     <div className="space-y-6 max-w-full mx-auto pb-20">
-      <div className="space-y-2">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-600/20">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 bg-clip-text text-transparent leading-tight flex items-center gap-2">
-              WhatsApp Business Center
-            </h1>
-            <p className="text-[14px] font-medium text-slate-500 dark:text-slate-400">
-              Enterprise Meta Business Suite powered by Fast2SMS. Manage WABA details, templates, campaign dispatches, live delivery reports, logs, and analytics.
-            </p>
-          </div>
+      <div className="flex items-center gap-3.5 sm:gap-4">
+        <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1 flex items-center justify-center shadow-md shadow-emerald-500/10 shrink-0 overflow-hidden self-center">
+          <img 
+            src="https://res.cloudinary.com/dixbhnqnf/image/upload/v1787833032/download_rebodm.jpg" 
+            alt="WhatsApp Logo" 
+            className="w-full h-full object-cover rounded-xl"
+          />
+        </div>
+        <div className="flex flex-col justify-center min-w-0 flex-1">
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-600 via-teal-600 to-green-500 bg-clip-text text-transparent leading-tight flex items-center gap-2">
+            WhatsApp Business Center
+          </h1>
+          <p className="text-xs sm:text-[14px] font-medium text-slate-500 dark:text-slate-400 leading-snug mt-1">
+            Enterprise Meta Business Suite powered by Fast2SMS. Manage WABA details, templates, campaign dispatches, live delivery reports, logs, and analytics.
+          </p>
         </div>
       </div>
 
       {/* Tabs Subnav */}
       <div className="border-b border-slate-200 dark:border-slate-800">
-        <nav className="-mb-px flex space-x-6 overflow-x-auto custom-scrollbar" aria-label="Tabs">
+        <nav className="-mb-px flex space-x-4 sm:space-x-6 overflow-x-auto custom-scrollbar no-scrollbar-on-desktop" aria-label="Tabs">
           {tabs.map((tab) => {
             const isActive = pathname === tab.href;
             return (
@@ -57,12 +59,12 @@ export default function Fast2SMSLayout({
                 href={tab.href}
                 className={cn(
                   isActive
-                    ? "border-indigo-600 text-indigo-600 dark:text-indigo-400"
+                    ? "border-emerald-600 text-emerald-600 dark:text-emerald-400"
                     : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-300",
-                  "group inline-flex items-center gap-2 border-b-2 py-4 px-2 text-sm font-bold whitespace-nowrap transition-colors"
+                  "group inline-flex items-center gap-2 border-b-2 py-3.5 px-1 text-xs sm:text-sm font-bold whitespace-nowrap transition-colors"
                 )}
               >
-                <tab.icon className="w-4 h-4" />
+                <tab.icon className="w-4 h-4 shrink-0" />
                 {tab.name}
               </Link>
             );

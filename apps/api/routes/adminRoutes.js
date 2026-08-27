@@ -2,16 +2,32 @@ const express = require('express');
 const router = express.Router();
 const { loginAdmin } = require('../controllers/adminController');
 const { getDashboardStats, getRevenueTrend, getLiveFeed } = require('../controllers/admin/dashboardController');
-const { getRetailers, getRetailerById, updateRetailerStatus, unlockRetailerAccount } = require('../controllers/admin/retailerController');
+const { 
+  getRetailers, 
+  getRetailerById, 
+  updateRetailerStatus, 
+  updateRetailerAccountType, 
+  unlockRetailerAccount,
+  updateRetailerProfile,
+  deleteRetailer,
+  resetRetailerSecurity,
+  revokeRetailerSessions
+} = require('../controllers/admin/retailerController');
 const { getGlobalLedger, manualCreditDebit } = require('../controllers/admin/walletController');
 const { getDashboardStats: getProviderWalletStats, getTransactions: getProviderWalletTransactions, getFast2SMSWallet } = require('../controllers/admin/providerWalletController');
 const { getGlobalTransactions } = require('../controllers/admin/transactionController');
-const { getCommissions, updateCommission } = require('../controllers/admin/commissionController');
+const { getCommissions, createCommission, updateCommission } = require('../controllers/admin/commissionController');
 const { getOperators, updateOperator } = require('../controllers/admin/operatorController');
-const { getProviders, refreshProviderBalance, getProviderBalance } = require('../controllers/admin/providerController');
+const { getProviders, refreshProviderBalance, getProviderBalance, triggerTestFast2SMSAlert } = require('../controllers/admin/providerController');
 const { getKycList, updateKycStatus } = require('../controllers/admin/kycController');
-const { generateTransactionReport, generateLedgerReport } = require('../controllers/admin/reportController');
-const { sendGlobalNotification, getRecentBroadcasts } = require('../controllers/admin/notificationController');
+const { 
+  getExecutiveDashboardReport,
+  getDailyReport,
+  getOperatorReport,
+  getCommissionReport,
+  generateLedgerReport 
+} = require('../controllers/admin/reportController');
+const { sendGlobalNotification, getRecentBroadcasts, sendDirectSMS } = require('../controllers/admin/notificationController');
 const { getSettings, updateSettings } = require('../controllers/admin/settingsController');
 const { getTickets, replyToTicket, resolveTicket } = require('../controllers/admin/supportController');
 const { getAuditLogs } = require('../controllers/admin/auditController');
@@ -34,9 +50,17 @@ router.get('/dashboard/live', protectAdmin, getLiveFeed);
 
 // Retailer routes (Requires SUPER_ADMIN or SUPPORT/ADMIN)
 router.get('/retailers', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getRetailers);
-router.get('/retailers/:id', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getRetailerById);
-router.put('/retailers/:id/status', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), updateRetailerStatus); // Support can't suspend
+router.route('/retailers/:id')
+  .get(protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getRetailerById)
+  .put(protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), updateRetailerProfile)
+  .delete(protectAdmin, authorize('SUPER_ADMIN'), deleteRetailer);
+
+router.put('/retailers/:id/status', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), updateRetailerStatus);
+router.put('/retailers/:id/account-type', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), updateRetailerAccountType);
 router.post('/retailers/:id/unlock', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, unlockRetailerAccount);
+router.post('/retailers/:id/reset-security', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, resetRetailerSecurity);
+router.post('/retailers/:id/revoke-sessions', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, revokeRetailerSessions);
+router.post('/notifications/send-sms', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, sendDirectSMS);
 
 // Distributor routes
 router.get('/distributors', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getDistributors);
@@ -56,6 +80,7 @@ router.get('/provider-wallet/dashboard', protectAdmin, authorize('SUPER_ADMIN', 
 router.get('/provider-wallet/transactions', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), getProviderWalletTransactions);
 router.get('/providers/fast2sms/wallet', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), getFast2SMSWallet);
 router.get('/provider-wallet/fast2sms', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), getFast2SMSWallet);
+router.post('/providers/fast2sms/test-low-balance-alert', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), triggerTestFast2SMSAlert);
 
 // Transaction routes
 router.get('/transactions', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'), getGlobalTransactions);
@@ -68,6 +93,7 @@ router.post('/recharges/:orderId/action', protectAdmin, authorize('SUPER_ADMIN',
 
 // Commission routes
 router.get('/commissions', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'SUPPORT'), getCommissions);
+router.post('/commissions', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), idempotency, createCommission);
 router.put('/commissions/:id', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), updateCommission);
 
 // Operator Management routes
@@ -84,8 +110,11 @@ router.get('/kyc', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), g
 router.put('/kyc/:id/status', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), updateKycStatus);
 
 // Report routes
-router.get('/reports/transactions', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), generateTransactionReport);
-router.get('/reports/ledger', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), generateLedgerReport);
+router.get('/reports/dashboard', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getExecutiveDashboardReport);
+router.get('/reports/daily', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getDailyReport);
+router.get('/reports/operators', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getOperatorReport);
+router.get('/reports/commissions', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getCommissionReport);
+router.get('/reports/ledger', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), generateLedgerReport);
 
 // Internal Notification routes
 router.post('/notifications/broadcast', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, sendGlobalNotification);
@@ -182,6 +211,9 @@ const {
   exportSyncLogs: exportPlanApiSyncLogs,
   getSettings: getPlanApiSettings,
   updateSettings: updatePlanApiSettings,
+  triggerTestLowBalanceAlert,
+  triggerTestFetchLimitAlert,
+  getIntegrationsStatus,
 } = require('../controllers/admin/planApiController');
 
 router.get('/planapi/dashboard', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'), getPlanApiDashboardData);
@@ -190,5 +222,21 @@ router.get('/planapi/logs', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FIN
 router.get('/planapi/export', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE'), exportPlanApiSyncLogs);
 router.get('/planapi/settings', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), getPlanApiSettings);
 router.put('/planapi/settings', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, updatePlanApiSettings);
+router.post('/planapi/test-low-balance-alert', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), triggerTestLowBalanceAlert);
+router.post('/planapi/test-fetch-limit-alert', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), triggerTestFetchLimitAlert);
+router.get('/integrations/planapi/status', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'), getIntegrationsStatus);
+
+// Provider Low Balance Automation Routes
+const {
+  getSettings: getProviderAutomationSettings,
+  updateSettings: updateProviderAutomationSettings,
+  getLogs: getProviderAutomationLogs,
+  sendTestAlert: sendProviderAutomationTestAlert,
+} = require('../controllers/admin/providerAutomationController');
+
+router.get('/provider-automations/settings', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'), getProviderAutomationSettings);
+router.put('/provider-automations/settings', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), updateProviderAutomationSettings);
+router.get('/provider-automations/logs', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'), getProviderAutomationLogs);
+router.post('/provider-automations/test', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), sendProviderAutomationTestAlert);
 
 module.exports = router;

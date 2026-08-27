@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePushNotificationHistory } from "@/hooks/useFirebasePush";
 import { format } from "date-fns";
 import { Loader2, History as HistoryIcon, Image as ImageIcon, Link as LinkIcon, AlertTriangle, ExternalLink } from "lucide-react";
@@ -91,9 +92,11 @@ export default function CampaignHistoryPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <Button variant="ghost" size="sm" className="h-8 font-semibold text-orange-600 hover:text-orange-700 hover:bg-orange-50">
-                        Duplicate
-                      </Button>
+                      <Link href={`/dashboard/firebase-push/compose?title=${encodeURIComponent(log.title)}&body=${encodeURIComponent(log.body)}&imageUrl=${encodeURIComponent(log.imageUrl || '')}&deepLink=${encodeURIComponent(log.deepLink || '')}`}>
+                        <Button variant="ghost" size="sm" className="h-8 font-semibold text-orange-600 hover:text-orange-700 hover:bg-orange-50">
+                          Duplicate
+                        </Button>
+                      </Link>
                     </td>
                   </tr>
                 ))}

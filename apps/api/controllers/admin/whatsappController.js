@@ -293,6 +293,9 @@ const sendCampaign = async (req, res, next) => {
         variablesValues: formattedVars,
         mediaUrl: mediaUrl || null,
         documentFilename: documentFilename || null,
+        source: 'PORTAL',
+        sentBy: req.admin?._id || null,
+        skipDbLog: true,
       });
     } catch (err) {
       status = 'FAILED';
@@ -314,7 +317,7 @@ const sendCampaign = async (req, res, next) => {
       requestId: fast2smsRes?.request_id || fast2smsRes?.data?.request_id || null,
       fast2smsResponse: fast2smsRes || null,
       sentBy: req.admin?._id || null,
-      source: 'MANUAL',
+      source: 'PORTAL',
       sentCount: status === 'DELIVERED' ? targetNumbers.length : 0,
       failedCount: status === 'FAILED' ? targetNumbers.length : 0,
       errorDetails,
@@ -373,35 +376,103 @@ const sendCampaign = async (req, res, next) => {
   }
 };
 
-// @desc    Get WhatsApp Campaign History
+// @desc    Get WhatsApp Campaign History (Unified across Portal, API, Campaign, Automation)
 // @route   GET /api/admin/whatsapp/history
 // @access  Private (Admin)
 const getCampaignHistory = async (req, res, next) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
-    const { search, status } = req.query;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 25;
+    const startIndex = (page - 1) * limit;
+
+    const { search, status, source, period, from, to } = req.query;
 
     const query = {};
+
+    // 1. Status Filter
     if (status && status !== 'ALL') {
-      query.status = status;
+      query.status = status.toUpperCase();
     }
-    if (search) {
+
+    // 2. Source Filter (handles aliases PORTAL/MANUAL & AUTOMATION/AUTOMATIC)
+    if (source && source !== 'ALL') {
+      const srcUpper = source.toUpperCase();
+      if (srcUpper === 'PORTAL') {
+        query.source = { $in: ['PORTAL', 'MANUAL'] };
+      } else if (srcUpper === 'AUTOMATION') {
+        query.source = { $in: ['AUTOMATION', 'AUTOMATIC'] };
+      } else {
+        query.source = srcUpper;
+      }
+    }
+
+    // 3. Date Range Filter
+    if (from || to) {
+      query.createdAt = {};
+      if (from) query.createdAt.$gte = new Date(from);
+      if (to) {
+        const toDate = new Date(to);
+        toDate.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = toDate;
+      }
+    } else if (period && period !== 'ALL') {
+      const now = new Date();
+      if (period === 'today') {
+        const today = new Date(now);
+        today.setHours(0, 0, 0, 0);
+        query.createdAt = { $gte: today };
+      } else if (period === 'yesterday') {
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(0, 0, 0, 0);
+        const endYesterday = new Date(yesterday);
+        endYesterday.setHours(23, 59, 59, 999);
+        query.createdAt = { $gte: yesterday, $lte: endYesterday };
+      } else if (period === '7d') {
+        const d7 = new Date(now);
+        d7.setDate(d7.getDate() - 7);
+        d7.setHours(0, 0, 0, 0);
+        query.createdAt = { $gte: d7 };
+      } else if (period === '30d') {
+        const d30 = new Date(now);
+        d30.setDate(d30.getDate() - 30);
+        d30.setHours(0, 0, 0, 0);
+        query.createdAt = { $gte: d30 };
+      }
+    }
+
+    // 4. Search Filter (Template name, Request ID, Variables, Recipient Phone)
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
       query.$or = [
-        { templateName: { $regex: search, $options: 'i' } },
-        { variablesValues: { $regex: search, $options: 'i' } },
-        { requestId: { $regex: search, $options: 'i' } },
+        { templateName: regex },
+        { requestId: regex },
+        { variablesValues: regex },
+        { recipients: regex },
       ];
     }
 
+    const total = await WhatsAppCampaignHistory.countDocuments(query);
+
     const history = await WhatsAppCampaignHistory.find(query)
-      .populate('sentBy', 'name')
+      .populate('sentBy', 'name email')
       .sort({ createdAt: -1 })
+      .skip(startIndex)
       .limit(limit)
       .lean();
+
+    const pages = Math.ceil(total / limit) || 1;
 
     res.status(200).json({
       success: true,
       count: history.length,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages,
+        hasMore: page < pages,
+      },
       data: history,
     });
   } catch (error) {

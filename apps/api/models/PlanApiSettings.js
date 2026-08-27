@@ -59,6 +59,18 @@ const planApiSettingsSchema = new mongoose.Schema(
       lastHitAlertAt: {
         type: Date,
         default: null,
+      },
+      fast2smsAlertSent: {
+        type: Boolean,
+        default: false,
+      },
+      lastFast2smsAlertAt: {
+        type: Date,
+        default: null,
+      },
+      lastFast2smsAlertBalance: {
+        type: Number,
+        default: null,
       }
     }
   },

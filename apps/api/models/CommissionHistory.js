@@ -13,6 +13,11 @@ const commissionHistorySchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+    accountType: {
+      type: String,
+      enum: ['PERSONAL', 'BUSINESS'],
+      default: 'PERSONAL',
+    },
     operatorCode: {
       type: String,
       required: true,

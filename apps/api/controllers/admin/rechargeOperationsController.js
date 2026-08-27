@@ -18,10 +18,15 @@ const getRecharges = async (req, res, next) => {
     const status = req.query.status || '';
     const operator = req.query.operator || '';
     const service = req.query.service || '';
+    const accountType = req.query.accountType || '';
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
 
     const query = { isTest: { $ne: true } };
+
+    if (accountType && accountType !== 'all') {
+      query.accountType = accountType.toUpperCase();
+    }
 
     if (status && status !== 'all') {
       query.status = status.toUpperCase();
@@ -50,7 +55,7 @@ const getRecharges = async (req, res, next) => {
     const total = await RechargeTransaction.countDocuments(query);
     
     const recharges = await RechargeTransaction.find(query)
-      .populate('userId', 'name retailerId phone')
+      .populate('userId', 'name retailerId phone accountType')
       .sort({ createdAt: -1 })
       .skip(startIndex)
       .limit(limit)
@@ -163,43 +168,65 @@ const performAction = async (req, res, next) => {
             description: `Recharge for ${transaction.mobileNumber} - Order ID: ${transaction.orderId}`,
           });
 
-          const commission = await commissionService.calculateCommission(transaction.operatorCode, transaction.amount);
-          if (commission.retailerCommissionAmount > 0) {
-            await walletService.addBalance(transaction.userId, commission.retailerCommissionAmount, {
-              referenceType: 'COMMISSION',
-              referenceId: transaction._id,
-              description: `Commission for Recharge ${transaction.orderId}`,
-            });
-            await Transaction.create({
-              userId: transaction.userId,
-              type: 'credit',
-              amountPaise: commission.retailerCommissionAmount * 100,
-              status: 'success',
-              service: 'commission',
-              referenceId: `COM${Date.now()}${Math.floor(Math.random() * 1000)}`,
-              description: `Commission for Recharge ${transaction.orderId}`,
-              apiReference: transaction._id.toString(),
-              paymentMethod: 'wallet',
-            });
-          }
+          const User = require('../../models/User');
+          const userRec = await User.findById(transaction.userId).lean();
+          const userAccountType = userRec?.accountType || transaction.accountType || 'PERSONAL';
+          transaction.accountType = userAccountType;
 
-          await CommissionHistory.create({
-            transactionId: transaction._id,
-            userId: transaction.userId,
-            operatorCode: transaction.operatorCode,
-            rechargeAmount: transaction.amount,
-            providerCommissionPercentage: commission.providerCommissionPercentage,
-            providerCommissionAmount: commission.providerCommissionAmount,
-            retailerCommissionPercentage: commission.retailerCommissionPercentage,
-            retailerCommissionAmount: commission.retailerCommissionAmount,
-            companyProfitPercentage: commission.companyProfitPercentage,
-            companyProfitAmount: commission.companyProfitAmount,
-          });
+          // Idempotency check: Ensure commission not credited twice
+          const existingComm = await CommissionHistory.findOne({ transactionId: transaction._id });
+          let commission;
+          if (!existingComm) {
+            commission = await commissionService.calculateCommission(
+              transaction.operatorCode,
+              transaction.amount,
+              '',
+              'mobile',
+              userAccountType,
+              transaction.userId
+            );
+            if (commission.retailerCommissionAmount > 0) {
+              await walletService.addBalance(transaction.userId, commission.retailerCommissionAmount, {
+                referenceType: 'COMMISSION',
+                referenceId: transaction._id,
+                description: `Commission for Recharge ${transaction.orderId}`,
+              });
+              await Transaction.create({
+                userId: transaction.userId,
+                accountType: userAccountType,
+                type: 'credit',
+                amountPaise: commission.retailerCommissionAmount * 100,
+                status: 'success',
+                service: 'commission',
+                referenceId: `COM${Date.now()}${Math.floor(Math.random() * 1000)}`,
+                description: `Commission for Recharge ${transaction.orderId}`,
+                apiReference: transaction._id.toString(),
+                paymentMethod: 'wallet',
+              });
+            }
+
+            await CommissionHistory.create({
+              transactionId: transaction._id,
+              userId: transaction.userId,
+              accountType: userAccountType,
+              operatorCode: transaction.operatorCode,
+              rechargeAmount: transaction.amount,
+              providerCommissionPercentage: commission.providerCommissionPercentage,
+              providerCommissionAmount: commission.providerCommissionAmount,
+              retailerCommissionPercentage: commission.retailerCommissionPercentage,
+              retailerCommissionAmount: commission.retailerCommissionAmount,
+              companyProfitPercentage: commission.companyProfitPercentage,
+              companyProfitAmount: commission.companyProfitAmount,
+            });
+          } else {
+            commission = { retailerCommissionAmount: existingComm.retailerCommissionAmount };
+          }
 
           await Transaction.updateOne({ referenceId: transaction.orderId }, { 
             status: 'success', 
+            accountType: userAccountType,
             apiReference: statusResponse.providerTransactionId,
-            commissionEarnedPaise: commission.retailerCommissionAmount * 100 
+            commissionEarnedPaise: (commission.retailerCommissionAmount || 0) * 100 
           });
 
           transaction.commissionCalculated = true;
@@ -324,40 +351,63 @@ const performAction = async (req, res, next) => {
               referenceId: transaction._id,
               description: `Recharge for ${transaction.mobileNumber} - Order ID: ${transaction.orderId}`,
             });
-            const commission = await commissionService.calculateCommission(transaction.operatorCode, transaction.amount);
-            if (commission.retailerCommissionAmount > 0) {
-              await walletService.addBalance(transaction.userId, commission.retailerCommissionAmount, {
-                referenceType: 'COMMISSION',
-                referenceId: transaction._id,
-                description: `Commission for Recharge ${transaction.orderId}`,
-              });
-              await Transaction.create({
+            const User = require('../../models/User');
+            const userRec = await User.findById(transaction.userId).lean();
+            const userAccountType = userRec?.accountType || transaction.accountType || 'PERSONAL';
+            transaction.accountType = userAccountType;
+
+            // Idempotency check: Ensure commission not credited twice
+            const existingComm = await CommissionHistory.findOne({ transactionId: transaction._id });
+            let commission;
+            if (!existingComm) {
+              commission = await commissionService.calculateCommission(
+                transaction.operatorCode,
+                transaction.amount,
+                '',
+                'mobile',
+                userAccountType,
+                transaction.userId
+              );
+              if (commission.retailerCommissionAmount > 0) {
+                await walletService.addBalance(transaction.userId, commission.retailerCommissionAmount, {
+                  referenceType: 'COMMISSION',
+                  referenceId: transaction._id,
+                  description: `Commission for Recharge ${transaction.orderId}`,
+                });
+                await Transaction.create({
+                  userId: transaction.userId,
+                  accountType: userAccountType,
+                  type: 'credit',
+                  amountPaise: commission.retailerCommissionAmount * 100,
+                  status: 'success',
+                  service: 'commission',
+                  referenceId: `COM${Date.now()}${Math.floor(Math.random() * 1000)}`,
+                  description: `Commission for Recharge ${transaction.orderId}`,
+                  apiReference: transaction._id.toString(),
+                  paymentMethod: 'wallet',
+                });
+              }
+              await CommissionHistory.create({
+                transactionId: transaction._id,
                 userId: transaction.userId,
-                type: 'credit',
-                amountPaise: commission.retailerCommissionAmount * 100,
-                status: 'success',
-                service: 'commission',
-                referenceId: `COM${Date.now()}${Math.floor(Math.random() * 1000)}`,
-                description: `Commission for Recharge ${transaction.orderId}`,
-                apiReference: transaction._id.toString(),
-                paymentMethod: 'wallet',
+                accountType: userAccountType,
+                operatorCode: transaction.operatorCode,
+                rechargeAmount: transaction.amount,
+                providerCommissionPercentage: commission.providerCommissionPercentage,
+                providerCommissionAmount: commission.providerCommissionAmount,
+                retailerCommissionPercentage: commission.retailerCommissionPercentage,
+                retailerCommissionAmount: commission.retailerCommissionAmount,
+                companyProfitPercentage: commission.companyProfitPercentage,
+                companyProfitAmount: commission.companyProfitAmount,
               });
+            } else {
+              commission = { retailerCommissionAmount: existingComm.retailerCommissionAmount };
             }
-            await CommissionHistory.create({
-              transactionId: transaction._id,
-              userId: transaction.userId,
-              operatorCode: transaction.operatorCode,
-              rechargeAmount: transaction.amount,
-              providerCommissionPercentage: commission.providerCommissionPercentage,
-              providerCommissionAmount: commission.providerCommissionAmount,
-              retailerCommissionPercentage: commission.retailerCommissionPercentage,
-              retailerCommissionAmount: commission.retailerCommissionAmount,
-              companyProfitPercentage: commission.companyProfitPercentage,
-              companyProfitAmount: commission.companyProfitAmount,
-            });
+
             await Transaction.updateOne({ referenceId: transaction.orderId }, { 
               status: 'success', 
-              commissionEarnedPaise: commission.retailerCommissionAmount * 100 
+              accountType: userAccountType,
+              commissionEarnedPaise: (commission.retailerCommissionAmount || 0) * 100 
             });
             transaction.commissionCalculated = true;
         } else {

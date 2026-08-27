@@ -72,54 +72,76 @@ class PendingRechargeWorker {
               description: `Recharge for ${transaction.mobileNumber} - Order ID: ${transaction.orderId}`,
             });
 
-            // Calculate & Credit Commission
-            const commission = await commissionService.calculateCommission(transaction.operatorCode, transaction.amount);
-            if (commission.retailerCommissionAmount > 0) {
-              await walletService.addBalance(transaction.userId, commission.retailerCommissionAmount);
-              await ledgerService.logTransaction({
-                userId: transaction.userId,
-                type: 'CREDIT',
-                amount: commission.retailerCommissionAmount,
-                referenceType: 'COMMISSION',
-                referenceId: transaction._id,
-                description: `Commission for Recharge ${transaction.orderId}`,
-              });
+            const User = require('../models/User');
+            const userRec = await User.findById(transaction.userId).lean();
+            const userAccountType = userRec?.accountType || transaction.accountType || 'PERSONAL';
+            transaction.accountType = userAccountType;
 
-              await Transaction.create({
+            // Idempotency Check: Verify if commission was already calculated
+            const existingComm = await CommissionHistory.findOne({ transactionId: transaction._id });
+            let commission;
+            if (!existingComm) {
+              commission = await commissionService.calculateCommission(
+                transaction.operatorCode,
+                transaction.amount,
+                '',
+                'mobile',
+                userAccountType,
+                transaction.userId
+              );
+
+              if (commission.retailerCommissionAmount > 0) {
+                await walletService.addBalance(transaction.userId, commission.retailerCommissionAmount);
+                await ledgerService.logTransaction({
+                  userId: transaction.userId,
+                  type: 'CREDIT',
+                  amount: commission.retailerCommissionAmount,
+                  referenceType: 'COMMISSION',
+                  referenceId: transaction._id,
+                  description: `Commission for Recharge ${transaction.orderId}`,
+                });
+
+                await Transaction.create({
+                  userId: transaction.userId,
+                  accountType: userAccountType,
+                  type: 'credit',
+                  amountPaise: commission.retailerCommissionAmount * 100,
+                  status: 'success',
+                  service: 'commission',
+                  referenceId: `COM${Date.now()}${Math.floor(Math.random() * 1000)}`,
+                  description: `Commission for Recharge ${transaction.orderId}`,
+                  apiReference: transaction._id.toString(),
+                  paymentMethod: 'wallet',
+                });
+              }
+
+              await CommissionHistory.create({
+                transactionId: transaction._id,
                 userId: transaction.userId,
-                type: 'credit',
-                amountPaise: commission.retailerCommissionAmount * 100,
-                status: 'success',
-                service: 'commission',
-                referenceId: `COM${Date.now()}${Math.floor(Math.random() * 1000)}`,
-                description: `Commission for Recharge ${transaction.orderId}`,
-                apiReference: transaction._id.toString(),
-                paymentMethod: 'wallet',
+                accountType: userAccountType,
+                operatorCode: transaction.operatorCode,
+                rechargeAmount: transaction.amount,
+                providerCommissionPercentage: commission.providerCommissionPercentage,
+                providerCommissionAmount: commission.providerCommissionAmount,
+                retailerCommissionPercentage: commission.retailerCommissionPercentage,
+                retailerCommissionAmount: commission.retailerCommissionAmount,
+                companyProfitPercentage: commission.companyProfitPercentage,
+                companyProfitAmount: commission.companyProfitAmount,
               });
+            } else {
+              commission = { retailerCommissionAmount: existingComm.retailerCommissionAmount };
             }
-
-            await CommissionHistory.create({
-              transactionId: transaction._id,
-              userId: transaction.userId,
-              operatorCode: transaction.operatorCode,
-              rechargeAmount: transaction.amount,
-              providerCommissionPercentage: commission.providerCommissionPercentage,
-              providerCommissionAmount: commission.providerCommissionAmount,
-              retailerCommissionPercentage: commission.retailerCommissionPercentage,
-              retailerCommissionAmount: commission.retailerCommissionAmount,
-              companyProfitPercentage: commission.companyProfitPercentage,
-              companyProfitAmount: commission.companyProfitAmount,
-            });
 
             await Transaction.updateOne({ referenceId: transaction.orderId }, { 
               status: 'success', 
+              accountType: userAccountType,
               apiReference: statusResponse.providerTransactionId,
-              commissionEarnedPaise: commission.retailerCommissionAmount * 100 
+              commissionEarnedPaise: (commission.retailerCommissionAmount || 0) * 100 
             });
 
             transaction.commissionCalculated = true;
             await transaction.save();
-            console.log(`[Worker] Transaction ${transaction.orderId} marked SUCCESS`);
+            console.log(`[Worker] Transaction ${transaction.orderId} marked SUCCESS | AccountType: ${userAccountType}`);
 
             // Send automatic notification
             NotificationService.sendRechargeSuccess({
@@ -130,6 +152,14 @@ class PendingRechargeWorker {
               operator: transaction.operatorCode,
               amount: transaction.amount,
               number: transaction.mobileNumber
+            });
+
+            // Background Provider Low-Balance Automation (Non-blocking)
+            const providerAutomationService = require('../services/providerAutomation.service');
+            setImmediate(() => {
+              providerAutomationService.checkAndTriggerLowBalanceAlert(transaction).catch(err => {
+                console.error('[Worker] Low balance automation error:', err.message);
+              });
             });
 
           } else if (statusResponse.status === 'FAILED') {

@@ -54,7 +54,10 @@ class PlanApiService {
   }
 
   /**
-   * Makes raw API call to PlanAPI UserData endpoint with 1 retry on timeout/network failure
+   * Makes raw API call to PlanAPI UserData endpoint matching official cURL spec:
+   * POST https://planapi.in/Api/Mobile/UserData
+   * Content-Type: application/x-www-form-urlencoded
+   * Body: ApiUserID=...&ApiPassword=...
    */
   static async callApiWithRetry(attempt = 1) {
     const baseUrl = process.env.PLANAPI_BASE_URL || 'https://planapi.in';
@@ -70,6 +73,13 @@ class PlanApiService {
       ApiPassword: apiPassword,
     });
 
+    console.log('[PLANAPI USERDATA] Request started');
+    console.log('[PLANAPI USERDATA] Method: POST');
+    console.log(`[PLANAPI USERDATA] URL: ${baseUrl}/Api/Mobile/UserData`);
+    console.log('[PLANAPI USERDATA] Content-Type: application/x-www-form-urlencoded');
+    console.log(`[PLANAPI USERDATA] ApiUserID: ${apiUserId}`);
+    console.log('[PLANAPI USERDATA] ApiPassword: ********');
+
     const startTime = Date.now();
 
     try {
@@ -81,32 +91,35 @@ class PlanApiService {
       });
 
       const responseTime = Date.now() - startTime;
-      return { data: response.data, responseTime };
+      console.log(`[PLANAPI USERDATA] HTTP Status: ${response.status}`);
+      console.log('[PLANAPI USERDATA] Response received');
+      return { data: response.data, responseTime, statusCode: response.status };
     } catch (error) {
       const responseTime = Date.now() - startTime;
+      console.error(`[PLANAPI USERDATA] HTTP Error: ${error.message}`);
       
       // Retry once on timeout or network errors
       if (attempt < 2 && (error.code === 'ECONNABORTED' || error.code === 'ENOTFOUND' || !error.response)) {
-        logger.warn(`PlanAPI request timed out/failed (attempt ${attempt}). Retrying once...`);
+        console.warn(`[PLANAPI USERDATA] Request timed out/failed (attempt ${attempt}). Retrying once...`);
         return this.callApiWithRetry(attempt + 1);
       }
 
-      return { error, responseTime };
+      return { error, responseTime, statusCode: error.response?.status || 500 };
     }
   }
 
   /**
-   * Main Sync Method: Calls API, parses response, handles errors, saves sync log, evaluates alerts
+   * Main Sync Method: Calls API, parses response, handles errors, saves sync log
    */
   static async syncData(triggeredBy = 'AUTOMATIC', adminId = null) {
     const settings = await this.getSettings();
     const { data, error, responseTime } = await this.callApiWithRetry(1);
 
     let syncLogData = {
-      balance: 0,
-      remainingHits: 0,
+      balance: null,
+      remainingHits: null,
       responseTime: responseTime || 0,
-      status: 'SUCCESS',
+      status: 'FAILED',
       errorMessage: null,
       syncedAt: new Date(),
       triggeredBy,
@@ -117,28 +130,15 @@ class PlanApiService {
 
     if (error) {
       syncLogData.status = 'OFFLINE';
-      syncLogData.errorMessage = 'Unable to fetch PlanAPI information.';
-      
-      if (error.response && error.response.data) {
-        const resStr = typeof error.response.data === 'string' ? error.response.data : JSON.stringify(error.response.data);
-        if (resStr.toLowerCase().includes('ip') || resStr.toLowerCase().includes('whitelist')) {
-          syncLogData.ipWhitelisted = false;
-          syncLogData.errorMessage = 'Server IP is not whitelisted.';
-        } else if (resStr.toLowerCase().includes('credential') || resStr.toLowerCase().includes('password') || resStr.toLowerCase().includes('user')) {
-          syncLogData.credentialsValid = false;
-          syncLogData.errorMessage = 'PlanAPI credentials are invalid.';
-        }
-      }
+      syncLogData.errorMessage = `Unable to fetch PlanAPI information: ${error.message}`;
     } else if (data) {
       syncLogData.rawResponse = data;
 
-      // STEP 1: Log COMPLETE raw response from PlanAPI before any parsing
       console.log('====================================================');
       console.log('[PlanAPI Raw Response]:');
       console.log(JSON.stringify(data, null, 2));
       console.log('====================================================');
 
-      // Handle String or JSON response parsing safely
       let parsed = data;
       if (typeof data === 'string') {
         try {
@@ -148,11 +148,6 @@ class PlanApiService {
         }
       }
 
-      // Check official error messages in payload response
-      const message = parsed.Message || parsed.message || parsed.ERROR || parsed.error || '';
-      const statusMsg = String(message).toLowerCase();
-
-      // STEP 2 & 3: Deep field extractor for UserBalance & RemainingHit
       let balanceVal = null;
       let hitsVal = null;
 
@@ -172,10 +167,8 @@ class PlanApiService {
         }
       };
 
-      // 1. Check top-level
       checkObject(parsed);
 
-      // 2. Check parsed.Data or parsed.DATA or parsed.data (Array or Object)
       const dataContainer = parsed.Data || parsed.DATA || parsed.data;
       if (dataContainer) {
         if (Array.isArray(dataContainer) && dataContainer.length > 0) {
@@ -185,24 +178,32 @@ class PlanApiService {
         }
       }
 
-      if ((statusMsg.includes('ip') && statusMsg.includes('whitelist')) || statusMsg.includes('un expcted error') || parsed.ERROR === '5') {
-        syncLogData.status = 'FAILED';
-        syncLogData.ipWhitelisted = false;
-        syncLogData.errorMessage = `PlanAPI returned an Unexpected Server Error (Error Code 5). Please contact PlanAPI support with your API User ID (${apiUserId}).`;
-      } else if (statusMsg.includes('invalid') || statusMsg.includes('credential') || statusMsg.includes('unauthorized') || statusMsg.includes('user not valid')) {
-        syncLogData.status = 'FAILED';
-        syncLogData.credentialsValid = false;
-        syncLogData.errorMessage = 'PlanAPI credentials are invalid or user not valid.';
+      if (parsed && (parsed.ERROR !== undefined || parsed.STATUS !== undefined)) {
+        if (String(parsed.ERROR) === '5' || parsed.STATUS === '3' || parsed.STATUS === 3) {
+          console.log('[PLANAPI USERDATA] Provider Error');
+          console.log(`ERROR: ${parsed.ERROR}`);
+          console.log(`STATUS: ${parsed.STATUS}`);
+          console.log(`MESSAGE: ${parsed.MESSAGE || parsed.message || 'Un Expcted Error'}`);
+
+          syncLogData.status = 'FAILED';
+          syncLogData.errorMessage = `Provider Error: ERROR=${parsed.ERROR}, STATUS=${parsed.STATUS}, MESSAGE=${parsed.MESSAGE || 'Un Expcted Error'}`;
+        } else if (balanceVal !== null && !isNaN(balanceVal)) {
+          syncLogData.balance = Number(balanceVal);
+          syncLogData.remainingHits = hitsVal !== null && !isNaN(hitsVal) ? Number(hitsVal) : 0;
+          syncLogData.status = 'SUCCESS';
+          syncLogData.errorMessage = null;
+        } else {
+          syncLogData.status = 'FAILED';
+          syncLogData.errorMessage = parsed.MESSAGE || parsed.message || 'Unable to parse UserBalance or RemainingHit from response';
+        }
       } else if (balanceVal !== null && !isNaN(balanceVal)) {
-        // STEP 3: Mapped exact numerical balance & hits
         syncLogData.balance = Number(balanceVal);
         syncLogData.remainingHits = hitsVal !== null && !isNaN(hitsVal) ? Number(hitsVal) : 0;
         syncLogData.status = 'SUCCESS';
         syncLogData.errorMessage = null;
       } else {
-        // STEP 4: Parsing failure error
         syncLogData.status = 'FAILED';
-        syncLogData.errorMessage = message || 'Unable to parse UserBalance or RemainingHit from PlanAPI response.';
+        syncLogData.errorMessage = 'Unable to parse UserBalance or RemainingHit from response';
       }
     }
 
@@ -223,11 +224,6 @@ class PlanApiService {
       } catch (err) {
         logger.error('Failed to create audit log for PlanAPI sync:', err);
       }
-    }
-
-    // Evaluate alerts if sync was successful
-    if (savedLog.status === 'SUCCESS') {
-      await this.evaluateAlerts(savedLog, settings, adminId);
     }
 
     return savedLog;
@@ -267,32 +263,12 @@ class PlanApiService {
       stateUpdated = true;
     }
 
-    // --- 2. Remaining Hits Alert Check ---
-    const isHitLow = syncLog.remainingHits < settings.lowRemainingHits;
-    const isHitCritical = syncLog.remainingHits < settings.criticalRemainingHits;
-
-    if (isHitLow && !settings.alertState.hitAlertSent) {
-      const alertType = isHitCritical ? 'CRITICAL' : 'WARNING';
-      const msg = `🚨 PlanAPI Low Remaining Hits Alert (${alertType}): Remaining hits are ${syncLog.remainingHits.toLocaleString()} (Threshold: ${settings.lowRemainingHits})`;
-      
-      await this.dispatchAlert(msg, settings, 'LOW_HITS');
-      
-      settings.alertState.hitAlertSent = true;
-      settings.alertState.lastHitAlertAt = new Date();
-      stateUpdated = true;
-
-      if (adminId) {
-        await AuditLog.create({
-          adminId,
-          action: 'PLANAPI_ALERT_SENT',
-          resource: 'PLANAPI',
-          description: `Sent PlanAPI Low Remaining Hits alert: ${syncLog.remainingHits}`,
-        }).catch(() => {});
-      }
-    } else if (!isHitLow && settings.alertState.hitAlertSent) {
-      // Hits recovered above warning threshold -> reset alert trigger
-      settings.alertState.hitAlertSent = false;
-      stateUpdated = true;
+    // --- 2. Remaining Hits / Fetch Limit Alert Check via PlanApiFetchMonitorService ---
+    try {
+      const planApiFetchMonitorService = require('./planApiFetchMonitor.service');
+      await planApiFetchMonitorService.processRemainingFetches(syncLog.remainingHits);
+    } catch (err) {
+      logger.error('Failed to process PlanAPI fetch limit alert:', err.message);
     }
 
     if (stateUpdated) {
@@ -333,6 +309,61 @@ class PlanApiService {
       } catch (e) {
         logger.error('Failed to send PlanAPI internal notification:', e);
       }
+    }
+  }
+
+  /**
+   * Helper method to fetch the latest successful PlanAPI sync record.
+   * Returns { balance, remainingHits, syncedAt } or null if no valid sync exists.
+   */
+  static async getLatestValidData() {
+    try {
+      const latestSuccess = await PlanApiSyncLog.findOne({ status: 'SUCCESS' }).sort({ syncedAt: -1 }).lean();
+      if (latestSuccess && latestSuccess.balance !== undefined && latestSuccess.balance !== null && !isNaN(Number(latestSuccess.balance))) {
+        return {
+          balance: Number(latestSuccess.balance),
+          remainingHits: Number(latestSuccess.remainingHits || 0),
+          syncedAt: latestSuccess.syncedAt,
+        };
+      }
+      return null;
+    } catch (err) {
+      logger.error('getLatestValidData error:', err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Reusable method to fetch the current PlanAPI wallet balance.
+   * Shared by Dashboard API and Wallet Monitor.
+   * Returns { success: boolean, balance: number, remainingHits: number, error: string|null }
+   */
+  static async getPlanApiWalletBalance() {
+    try {
+      const syncLog = await this.syncData('AUTOMATIC');
+      if (syncLog && syncLog.status === 'SUCCESS' && syncLog.balance !== undefined && syncLog.balance !== null && !isNaN(Number(syncLog.balance))) {
+        return {
+          success: true,
+          balance: Number(syncLog.balance),
+          remainingHits: Number(syncLog.remainingHits || 0),
+          syncedAt: syncLog.syncedAt,
+          error: null,
+        };
+      }
+      return {
+        success: false,
+        balance: 0,
+        remainingHits: 0,
+        error: syncLog?.errorMessage || 'Failed to fetch PlanAPI wallet balance',
+      };
+    } catch (err) {
+      logger.error('getPlanApiWalletBalance error:', err.message);
+      return {
+        success: false,
+        balance: 0,
+        remainingHits: 0,
+        error: err.message,
+      };
     }
   }
 }

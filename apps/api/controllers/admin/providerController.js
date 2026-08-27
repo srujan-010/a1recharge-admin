@@ -134,8 +134,29 @@ const getProviderBalance = async (req, res, next) => {
   }
 };
 
+// @desc    Test Fast2SMS Low Balance WhatsApp Alert
+// @route   POST /api/admin/providers/fast2sms/test-low-balance-alert
+// @access  Private (Super Admin / Admin / Finance)
+const triggerTestFast2SMSAlert = async (req, res, next) => {
+  try {
+    const { balance } = req.body;
+    const testBalance = balance !== undefined ? parseFloat(balance) : 24.50;
+    const fast2SMSWalletMonitorService = require('../../services/fast2SMSWalletMonitor.service');
+    const result = await fast2SMSWalletMonitorService.sendTestAlert(testBalance);
+
+    res.status(200).json({
+      success: true,
+      message: 'Test Fast2SMS WhatsApp low-balance alert dispatched',
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getProviders,
   refreshProviderBalance,
-  getProviderBalance
+  getProviderBalance,
+  triggerTestFast2SMSAlert,
 };

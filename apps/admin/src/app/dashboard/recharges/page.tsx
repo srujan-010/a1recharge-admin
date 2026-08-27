@@ -31,6 +31,9 @@ import {
 
 import { TransactionDetailsDrawer } from "./TransactionDetailsDrawer";
 
+import { AccountTypeBadge } from "@/components/ui/account-type-badge";
+import { AccountTypeFilter, AccountTypeFilterValue } from "@/components/ui/account-type-filter";
+
 export default function RechargesOperationsPage() {
   const { user } = useAuth();
   const [page, setPage] = useState(1);
@@ -38,8 +41,9 @@ export default function RechargesOperationsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState("all");
   const [operator, setOperator] = useState("");
+  const [accountTypeFilter, setAccountTypeFilter] = useState<AccountTypeFilterValue>("all");
   
-  const { data, isLoading, refetch } = useRecharges(page, 20, search, status, operator);
+  const { data, isLoading, refetch } = useRecharges(page, 20, search, status, operator, '', '', accountTypeFilter);
   
   const [selectedTxn, setSelectedTxn] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -190,11 +194,15 @@ export default function RechargesOperationsPage() {
       header: "Retailer",
       cell: (info: any) => {
         const user = info.getValue();
+        const accType = info.row.original.accountType || user?.accountType;
         if (!user) return <span className="text-muted-foreground">-</span>;
         return (
-          <div className="flex flex-col">
+          <div className="flex flex-col gap-1 items-start">
             <span className="font-semibold text-primary">{user.name}</span>
-            <span className="text-[10px] text-muted-foreground font-mono">ID: {user.retailerId}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-muted-foreground font-mono">ID: {user.retailerId}</span>
+              <AccountTypeBadge type={accType} size="sm" />
+            </div>
           </div>
         );
       },
@@ -317,7 +325,12 @@ export default function RechargesOperationsPage() {
           />
         </form>
         
-        <div className="flex w-full md:w-auto gap-4">
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+          <AccountTypeFilter
+            value={accountTypeFilter}
+            onChange={(val) => { setAccountTypeFilter(val); setPage(1); }}
+            showAll={true}
+          />
           <select
             value={status}
             onChange={(e) => { setStatus(e.target.value); setPage(1); }}

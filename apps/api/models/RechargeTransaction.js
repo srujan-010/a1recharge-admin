@@ -12,6 +12,11 @@ const rechargeTransactionSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+    accountType: {
+      type: String,
+      enum: ['PERSONAL', 'BUSINESS'],
+      default: 'PERSONAL',
+    },
     providerName: {
       type: String,
       required: true,

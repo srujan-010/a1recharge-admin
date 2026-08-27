@@ -1,17 +1,22 @@
 "use client";
 
-import { useState } from "react";
-import { useRetailersList, useUpdateRetailerStatus, useUnlockRetailerAccount, useCreateRetailer, Retailer } from "@/hooks/useRetailers";
+import { useState, useMemo } from "react";
+import { 
+  useRetailersList, 
+  useUpdateRetailerStatus, 
+  useUnlockRetailerAccount, 
+  useCreateRetailer, 
+  Retailer 
+} from "@/hooks/useRetailers";
 import { 
   Search, Loader2, Eye, Ban, CheckCircle, ChevronLeft, ChevronRight, 
-  Users, Plus, Download, MoreVertical, Copy, Check, X, CreditCard, 
-  Phone, Edit, FileText, ArrowLeftRight, ShieldCheck, Bell, ChevronDown,
-  Wallet, History, Building2, MapPin, Activity, Smartphone, Lock, Unlock
+  Users, Plus, Download, Copy, Check, X, Phone, Edit, FileText, 
+  ShieldCheck, Bell, ChevronDown, Wallet, History, Building2, MapPin, 
+  Activity, Smartphone, Lock, Unlock, AlertTriangle, RefreshCw, MoreVertical
 } from "lucide-react";
 import Link from "next/link";
 import { format, formatDistanceToNow } from "date-fns";
 import { ManualAdjustmentModal } from "@/components/retailer/ManualAdjustmentModal";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 export default function RetailersPage() {
@@ -20,9 +25,10 @@ export default function RetailersPage() {
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [accountTypeFilter, setAccountTypeFilter] = useState<string>("all");
   const [kycFilter, setKycFilter] = useState("all");
   
-  // Quick Filters
+  // Quick Filter Tabs
   const [quickFilter, setQuickFilter] = useState("All");
 
   // Selection & Bulk Actions
@@ -30,33 +36,41 @@ export default function RetailersPage() {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
 
-  // Modals state
+  // Modals State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [editingRetailer, setEditingRetailer] = useState<Retailer | null>(null);
   const [activeActionMenu, setActiveActionMenu] = useState<string | null>(null);
   const [adjustmentTarget, setAdjustmentTarget] = useState<{ id: string; name: string; type: "credit" | "debit" } | null>(null);
   const [unlockModalTarget, setUnlockModalTarget] = useState<{ id: string; name: string } | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // New Retailer Form State
-  const [newRetailer, setNewRetailer] = useState({
+  const [newRetailer, setNewRetailer] = useState<{
+    name: string;
+    phone: string;
+    email: string;
+    shopName: string;
+    city: string;
+    state: string;
+    accountType: "PERSONAL" | "BUSINESS";
+  }>({
     name: "",
     phone: "",
     email: "",
     shopName: "",
     city: "",
     state: "",
+    accountType: "PERSONAL",
   });
 
   // Hooks
-  const { data, isLoading, refetch } = useRetailersList(page, pageSize, search, statusFilter);
+  const { data, isLoading, isFetching, refetch } = useRetailersList(page, pageSize, search, statusFilter, accountTypeFilter as any);
   const { mutate: updateStatus } = useUpdateRetailerStatus();
   const { mutate: unlockAccount, isPending: isUnlocking } = useUnlockRetailerAccount();
   const { mutate: createRetailer, isPending: isCreating } = useCreateRetailer();
 
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
+  const showToast = (text: string, isError = false) => {
+    setToastMsg({ text, isError });
     setTimeout(() => setToastMsg(null), 3500);
   };
 
@@ -66,55 +80,65 @@ export default function RetailersPage() {
     setPage(1);
   };
 
+  const handleClearSearch = () => {
+    setSearchInput("");
+    setSearch("");
+    setPage(1);
+  };
+
   const handleCopyId = (retailerId: string) => {
     navigator.clipboard.writeText(retailerId);
     setCopiedId(retailerId);
-    showToast(`Retailer ID ${retailerId} copied to clipboard`);
+    showToast(`Retailer ID ${retailerId} copied`);
     setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleCreateRetailer = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newRetailer.name || !newRetailer.phone) return;
+    if (!newRetailer.name.trim() || !newRetailer.phone.trim()) return;
 
     createRetailer(newRetailer, {
       onSuccess: () => {
         setIsAddModalOpen(false);
-        setNewRetailer({ name: "", phone: "", email: "", shopName: "", city: "", state: "" });
+        setNewRetailer({ name: "", phone: "", email: "", shopName: "", city: "", state: "", accountType: "PERSONAL" });
         showToast("New retailer account created successfully!");
         refetch();
       },
       onError: (err: any) => {
-        alert(err?.response?.data?.message || err.message || "Failed to create retailer");
+        showToast(err?.response?.data?.message || err.message || "Failed to create retailer", true);
       }
     });
   };
 
-  // Selection handlers
   const list: Retailer[] = data?.data || [];
-  
   const isAccountLocked = (r: Retailer) => Boolean(r.isLocked || (r.lockUntil && new Date(r.lockUntil) > new Date()));
 
-  let filteredList = list.filter(r => kycFilter === 'all' || r.kycStatus === kycFilter);
-  
-  if (quickFilter === 'Active') {
-    filteredList = filteredList.filter(r => r.status === 'active' && !isAccountLocked(r));
-  } else if (quickFilter === 'Locked') {
-    filteredList = filteredList.filter(r => isAccountLocked(r));
-  } else if (quickFilter === 'Pending KYC') {
-    filteredList = filteredList.filter(r => r.kycStatus === 'pending');
-  } else if (quickFilter === 'Blocked') {
-    filteredList = filteredList.filter(r => r.status === 'blocked');
-  } else if (quickFilter === 'Low Wallet') {
-    filteredList = filteredList.filter(r => r.walletBalancePaise < 50000); // less than 500 INR
-  }
+  // Filtered List Logic
+  const filteredList = useMemo(() => {
+    let result = list.filter(r => kycFilter === 'all' || r.kycStatus === kycFilter);
+    
+    if (quickFilter === 'Active') {
+      result = result.filter(r => r.status === 'active' && !isAccountLocked(r));
+    } else if (quickFilter === 'Locked') {
+      result = result.filter(r => isAccountLocked(r));
+    } else if (quickFilter === 'Pending KYC') {
+      result = result.filter(r => r.kycStatus === 'pending');
+    } else if (quickFilter === 'Blocked') {
+      result = result.filter(r => r.status === 'blocked');
+    } else if (quickFilter === 'Low Wallet') {
+      result = result.filter(r => r.accountType !== 'PERSONAL' && (r.walletBalancePaise || 0) < 50000); // < ₹500
+    }
 
-  if (statusFilter === 'locked') {
-    filteredList = filteredList.filter(r => isAccountLocked(r));
-  } else if (statusFilter === 'unlocked') {
-    filteredList = filteredList.filter(r => !isAccountLocked(r));
-  }
+    if (statusFilter === 'locked') {
+      result = result.filter(r => isAccountLocked(r));
+    } else if (statusFilter === 'unlocked') {
+      result = result.filter(r => !isAccountLocked(r));
+    }
 
+    return result;
+  }, [list, kycFilter, quickFilter, statusFilter]);
+
+  // Selection Handlers
   const toggleSelectAll = () => {
     if (selectedIds.length === filteredList.length) {
       setSelectedIds([]);
@@ -129,238 +153,297 @@ export default function RetailersPage() {
     );
   };
 
-  // Export File Generator
-  const handleExport = (formatType: 'csv' | 'excel') => {
-    setIsExportOpen(false);
-    if (filteredList.length === 0) return;
+  // Active Filters Check
+  const hasActiveFilters = search || accountTypeFilter !== 'all' || statusFilter !== 'all' || kycFilter !== 'all' || quickFilter !== 'All';
 
-    const headers = ["Retailer ID,Name,Phone,Email,Shop Name,City,State,Wallet Balance (INR),Status,KYC Status,Joined Date\n"];
-    const rows = filteredList.map(r => 
-      `"${r.retailerId}","${r.name}","${r.phone}","${r.email || ''}","${r.shopName || ''}","${r.city || ''}","${r.state || ''}","${(r.walletBalancePaise / 100).toFixed(2)}","${r.status}","${r.kycStatus}","${r.createdAt ? format(new Date(r.createdAt), 'yyyy-MM-dd') : ''}"\n`
+  const resetAllFilters = () => {
+    setSearch("");
+    setSearchInput("");
+    setAccountTypeFilter("all");
+    setStatusFilter("all");
+    setKycFilter("all");
+    setQuickFilter("All");
+    setPage(1);
+  };
+
+  // Export File Generator
+  const handleExport = (formatType: 'csv' | 'excel', exportType: 'all' | 'filtered' | 'selected' = 'filtered') => {
+    setIsExportOpen(false);
+    let targetData = filteredList;
+    if (exportType === 'selected') {
+      targetData = filteredList.filter(r => selectedIds.includes(r._id));
+    }
+
+    if (targetData.length === 0) return;
+
+    const headers = ["Retailer ID,Name,Account Type,Phone,Email,Shop Name,City,State,Wallet Balance (INR),Status,KYC Status,Joined Date\n"];
+    const rows = targetData.map(r => 
+      `"${r.retailerId}","${r.name}","${r.accountType || 'PERSONAL'}","${r.phone}","${r.email || ''}","${r.shopName || ''}","${r.city || ''}","${r.state || ''}","${(r.walletBalancePaise / 100).toFixed(2)}","${r.status}","${r.kycStatus}","${r.createdAt ? format(new Date(r.createdAt), 'yyyy-MM-dd') : ''}"\n`
     );
 
     const blob = new Blob([...headers, ...rows], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `retailers_crm_export.${formatType === 'csv' ? 'csv' : 'xls'}`;
+    a.download = `retailers_export_${new Date().toISOString().split('T')[0]}.${formatType === 'csv' ? 'csv' : 'xls'}`;
     a.click();
-    showToast(`Exported ${filteredList.length} retailers to ${formatType.toUpperCase()}`);
+    showToast(`Exported ${targetData.length} retailers to ${formatType.toUpperCase()}`);
   };
   
-  // Calculate stats for Summary Bar (based on current page data as approximation, plus total from pagination)
+  // Summary Stats Calculations
   const totalRetailers = data?.pagination?.total || 0;
-  const activeCount = list.filter(r => r.status === 'active').length;
+  const activeCount = list.filter(r => r.status === 'active' && !isAccountLocked(r)).length;
+  const lockedCount = list.filter(r => isAccountLocked(r)).length;
   const pendingKycCount = list.filter(r => r.kycStatus === 'pending').length;
   const blockedCount = list.filter(r => r.status === 'blocked').length;
-  const totalWalletBal = list.reduce((acc, r) => acc + r.walletBalancePaise, 0) / 100;
+  const lowWalletCount = list.filter(r => r.accountType !== 'PERSONAL' && (r.walletBalancePaise || 0) < 50000).length;
+  
+  const totalWalletBal = list
+    .filter(r => r.accountType !== 'PERSONAL')
+    .reduce((acc, r) => acc + (r.walletBalancePaise || 0), 0) / 100;
 
   return (
-    <div className="space-y-6 max-w-full mx-auto pb-20">
+    <div className="space-y-6 max-w-full mx-auto pb-20 animate-in fade-in duration-200 font-sans text-slate-900 dark:text-slate-100">
       
-      {/* Toast Popup Notification */}
+      {/* Toast Notification */}
       {toastMsg && (
-        <div className="fixed top-6 right-6 z-50 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-2xl border border-slate-800 flex items-center gap-3 animate-in slide-in-from-top-4 duration-300">
-          <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
-          <span className="text-sm font-medium">{toastMsg}</span>
+        <div className={`fixed top-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg border flex items-center gap-2.5 text-xs font-semibold animate-in slide-in-from-top-3 duration-200 ${
+          toastMsg.isError ? 'bg-rose-900 text-white border-rose-700' : 'bg-slate-900 text-white border-slate-700'
+        }`}>
+          {toastMsg.isError ? <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" /> : <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />}
+          <span>{toastMsg.text}</span>
         </div>
       )}
 
-      {/* Pure CRM Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
+      {/* Page Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
             Retailers
           </h1>
-          <p className="text-[16px] font-medium text-slate-500 dark:text-slate-400">
-            Enterprise overview of agents, wallets, and KYC compliance.
+          <p className="text-xs text-slate-500 dark:text-slate-400 font-normal mt-1">
+            Manage retailer accounts, wallets, KYC status, activity and access.
           </p>
         </div>
 
-        {/* Top Right Action Group */}
-        <div className="flex items-center gap-3">
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2.5">
           
-          {/* Bulk Actions Menu */}
-          <div className="relative">
-            <Button
-              onClick={() => setIsBulkOpen(prev => !prev)}
-              variant="outline"
-              disabled={selectedIds.length === 0}
-              className="h-[44px] px-4 font-semibold text-[15px] rounded-xl border-[#E5E7EB] disabled:opacity-50"
-            >
-              <span>Bulk Actions ({selectedIds.length})</span>
-              <ChevronDown className="w-4 h-4 ml-2 text-slate-400" />
-            </Button>
-
-            {isBulkOpen && selectedIds.length > 0 && (
-              <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-2 z-50 space-y-1 text-left">
-                <button
-                  onClick={() => {
-                    setIsBulkOpen(false);
-                    showToast(`Broadcast notification sent to ${selectedIds.length} retailers`);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl"
-                >
-                  <Bell className="w-4 h-4 text-blue-500" />
-                  <span>Send Notification</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setIsBulkOpen(false);
-                    if (confirm(`Suspend ${selectedIds.length} selected retailers?`)) {
-                      selectedIds.forEach(id => updateStatus({ id, status: 'suspended', reason: 'Bulk Action' }));
-                      showToast(`Suspended ${selectedIds.length} retailers`);
-                    }
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-xl"
-                >
-                  <Ban className="w-4 h-4" />
-                  <span>Bulk Suspend</span>
-                </button>
-              </div>
-            )}
-          </div>
-
           {/* Export Dropdown */}
           <div className="relative">
             <Button
               onClick={() => setIsExportOpen(prev => !prev)}
               variant="outline"
-              className="h-[44px] px-4 font-semibold text-[15px] rounded-xl border-[#E5E7EB]"
+              className="h-9 px-3.5 text-xs font-semibold rounded-lg border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-50"
             >
-              <Download className="w-4 h-4 mr-2 text-slate-500" /> Export
-              <ChevronDown className="w-4 h-4 ml-1 text-slate-400" />
+              <Download className="w-3.5 h-3.5 mr-1.5 text-slate-500" /> Export
+              <ChevronDown className="w-3.5 h-3.5 ml-1 text-slate-400" />
             </Button>
 
             {isExportOpen && (
-              <div className="absolute right-0 mt-2 w-48 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-2 z-50 space-y-1 text-left">
+              <div className="absolute right-0 mt-1.5 w-48 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-lg p-1 z-50 text-left">
                 <button
-                  onClick={() => handleExport('csv')}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl"
+                  onClick={() => handleExport('csv', 'filtered')}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
                 >
-                  <FileText className="w-4 h-4 text-emerald-500" />
-                  <span>Export as CSV</span>
+                  <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Export CSV</span>
                 </button>
                 <button
-                  onClick={() => handleExport('excel')}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl"
+                  onClick={() => handleExport('excel', 'filtered')}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
                 >
-                  <FileText className="w-4 h-4 text-blue-500" />
-                  <span>Export as Excel</span>
+                  <FileText className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Export Excel</span>
                 </button>
+                {selectedIds.length > 0 && (
+                  <button
+                    onClick={() => handleExport('csv', 'selected')}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/30 rounded-md"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Export Selected ({selectedIds.length})</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
 
-          {/* Primary CTA */}
+          {/* Primary CTA: Add Retailer */}
           <Button
             onClick={() => setIsAddModalOpen(true)}
-            className="h-[44px] bg-[linear-gradient(to_right,#2563eb,#1d4ed8)] hover:brightness-110 text-white font-semibold text-[15px] rounded-xl shadow-md shadow-blue-600/20"
+            className="h-9 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-4 rounded-lg shadow-sm"
           >
-            <Plus className="w-4.5 h-4.5 mr-2" /> Add Retailer
+            <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Retailer
           </Button>
 
         </div>
       </div>
       
-      {/* Compact Summary Bar */}
-      <div className="bg-slate-900 text-white dark:bg-slate-950 rounded-[16px] p-4 shadow-lg flex flex-wrap items-center justify-between gap-4 border border-slate-800 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-transparent rounded-full blur-3xl pointer-events-none" />
+      {/* 6 Clean Summary Statistics Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
         
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center border border-blue-500/30">
-            <Users className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Retailers</p>
-            <p className="text-xl font-bold text-white">{totalRetailers}</p>
-          </div>
-        </div>
-        
-        <div className="w-px h-10 bg-slate-800 hidden sm:block" />
-        
-        <div>
-          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Active</p>
-          <p className="text-xl font-bold text-emerald-400">{activeCount}</p>
-        </div>
-        
-        <div className="w-px h-10 bg-slate-800 hidden sm:block" />
-        
-        <div>
-          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Pending KYC</p>
-          <p className="text-xl font-bold text-amber-400">{pendingKycCount}</p>
+        {/* Total Retailers */}
+        <div 
+          onClick={() => { setQuickFilter("All"); setPage(1); }}
+          className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
+            quickFilter === 'All'
+              ? 'bg-blue-50/60 dark:bg-blue-950/30 border-blue-300 dark:border-blue-800'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Total Retailers</span>
+          <p className="text-2xl font-bold font-sans text-slate-900 dark:text-white mt-1">{totalRetailers}</p>
+          <span className="text-xs font-normal text-slate-500">{activeCount} active</span>
         </div>
 
-        <div className="w-px h-10 bg-slate-800 hidden sm:block" />
-        
-        <div>
-          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Blocked</p>
-          <p className="text-xl font-bold text-rose-400">{blockedCount}</p>
+        {/* Active */}
+        <div 
+          onClick={() => { setQuickFilter("Active"); setPage(1); }}
+          className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
+            quickFilter === 'Active'
+              ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Active</span>
+          <p className="text-2xl font-bold font-sans text-emerald-600 dark:text-emerald-400 mt-1">{activeCount}</p>
+          <span className="text-xs font-normal text-slate-500">
+            {totalRetailers > 0 ? Math.round((activeCount / totalRetailers) * 100) : 0}% of total
+          </span>
         </div>
 
-        <div className="w-px h-10 bg-slate-800 hidden lg:block" />
-        
-        <div className="ml-auto bg-slate-800/50 px-4 py-2 rounded-xl border border-slate-700/50">
-          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">Total Wallet Balance</p>
-          <p className="text-lg font-bold font-mono text-emerald-400">₹{totalWalletBal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+        {/* Pending KYC */}
+        <div 
+          onClick={() => { setQuickFilter("Pending KYC"); setPage(1); }}
+          className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
+            quickFilter === 'Pending KYC'
+              ? 'bg-amber-50/60 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Pending KYC</span>
+          <p className="text-2xl font-bold font-sans text-amber-600 dark:text-amber-400 mt-1">{pendingKycCount}</p>
+          <span className="text-xs font-normal text-slate-500">Requires review</span>
         </div>
+
+        {/* Blocked */}
+        <div 
+          onClick={() => { setQuickFilter("Blocked"); setPage(1); }}
+          className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
+            quickFilter === 'Blocked'
+              ? 'bg-rose-50/60 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Blocked</span>
+          <p className="text-2xl font-bold font-sans text-rose-600 dark:text-rose-400 mt-1">{blockedCount}</p>
+          <span className="text-xs font-normal text-slate-500">Restricted</span>
+        </div>
+
+        {/* Low Wallet */}
+        <div 
+          onClick={() => { setQuickFilter("Low Wallet"); setPage(1); }}
+          className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
+            quickFilter === 'Low Wallet'
+              ? 'bg-amber-50/60 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Low Wallet</span>
+          <p className="text-2xl font-bold font-sans text-amber-600 dark:text-amber-400 mt-1">{lowWalletCount}</p>
+          <span className="text-xs font-normal text-slate-500">&lt; ₹500 balance</span>
+        </div>
+
+        {/* Total Wallet Balance */}
+        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Total Wallet</span>
+          <p className="text-xl font-bold font-mono text-slate-900 dark:text-white mt-1 truncate">
+            ₹{totalWalletBal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+          <span className="text-xs font-normal text-slate-500">Business balance</span>
+        </div>
+
       </div>
       
-      {/* Quick Filter Chips */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
-        {['All', 'Active', 'Locked', 'Pending KYC', 'Blocked', 'Low Wallet'].map(filter => (
+      {/* Segmented Filter Tab Bar */}
+      <div className="border-b border-slate-200 dark:border-slate-800 flex items-center gap-6 overflow-x-auto custom-scrollbar text-xs font-medium">
+        {[
+          { id: 'All', label: `All (${totalRetailers})` },
+          { id: 'Active', label: `Active (${activeCount})` },
+          { id: 'Locked', label: `Locked (${lockedCount})` },
+          { id: 'Pending KYC', label: `Pending KYC (${pendingKycCount})` },
+          { id: 'Blocked', label: `Blocked (${blockedCount})` },
+          { id: 'Low Wallet', label: `Low Wallet (${lowWalletCount})` },
+        ].map(tab => (
           <button
-            key={filter}
-            onClick={() => { setQuickFilter(filter); setPage(1); }}
-            className={`px-4 py-1.5 rounded-full text-sm font-bold whitespace-nowrap transition-all ${
-              quickFilter === filter 
-                ? 'bg-blue-600 text-white shadow-md' 
-                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
+            key={tab.id}
+            onClick={() => { setQuickFilter(tab.id); setPage(1); }}
+            className={`py-2.5 whitespace-nowrap border-b-2 transition-colors ${
+              quickFilter === tab.id 
+                ? 'border-blue-600 text-blue-600 font-semibold' 
+                : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            {filter === 'Locked' ? '🔒 Locked' : filter}
+            {tab.label}
           </button>
         ))}
       </div>
 
-      {/* Advanced Filter Toolbar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-[18px] border border-[#E7ECF3] dark:border-slate-800 shadow-sm space-y-3">
-        <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
+      {/* Search + Filter Toolbar */}
+      <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2.5 shadow-sm">
+        <div className="flex flex-col md:flex-row gap-2.5 items-center justify-between">
           
+          {/* Search Form */}
           <form onSubmit={handleSearchSubmit} className="flex-1 relative w-full">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by retailer name, phone, email, shop name, or ID..."
+              placeholder="Search retailers by name, phone, shop, or ID..."
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              className="w-full pl-10 pr-10 h-[48px] text-sm bg-slate-50 dark:bg-slate-800 border border-[#E5E7EB] dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+              className="w-full pl-9 pr-8 h-9 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
             />
             {searchInput && (
-              <button type="button" onClick={() => { setSearchInput(''); setSearch(''); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
+              <button type="button" onClick={handleClearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <X className="w-3.5 h-3.5" />
               </button>
             )}
           </form>
 
-          <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-end">
+          {/* Filter Dropdowns */}
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+            
+            {/* Account Type Filter */}
+            <select
+              value={accountTypeFilter}
+              onChange={(e) => { setAccountTypeFilter(e.target.value); setPage(1); }}
+              className="h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="all">Account: All</option>
+              <option value="PERSONAL">Personal</option>
+              <option value="BUSINESS">Business</option>
+            </select>
+
+            {/* Status Filter */}
             <select
               value={statusFilter}
               onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-              className="h-[48px] px-3.5 py-2 rounded-xl border border-[#E5E7EB] dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[130px]"
+              className="h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <option value="all">Status: All</option>
               <option value="active">Active</option>
-              <option value="locked">🔒 Locked</option>
+              <option value="locked">Locked</option>
               <option value="unlocked">Unlocked</option>
               <option value="suspended">Suspended</option>
               <option value="blocked">Blocked</option>
             </select>
 
+            {/* KYC Filter */}
             <select
               value={kycFilter}
-              onChange={(e) => setKycFilter(e.target.value)}
-              className="h-[48px] px-3.5 py-2 rounded-xl border border-[#E5E7EB] dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[130px]"
+              onChange={(e) => { setKycFilter(e.target.value); setPage(1); }}
+              className="h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <option value="all">KYC: All</option>
               <option value="verified">Verified</option>
@@ -368,221 +451,297 @@ export default function RetailersPage() {
               <option value="rejected">Rejected</option>
               <option value="none">None</option>
             </select>
-          </div>
 
+            {/* Bulk Actions Button */}
+            {selectedIds.length > 0 && (
+              <div className="relative">
+                <Button
+                  onClick={() => setIsBulkOpen(prev => !prev)}
+                  className="h-9 px-3 text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-lg"
+                >
+                  Bulk Actions ({selectedIds.length})
+                  <ChevronDown className="w-3.5 h-3.5 ml-1" />
+                </Button>
+
+                {isBulkOpen && (
+                  <div className="absolute right-0 mt-1.5 w-48 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-lg p-1 z-50 text-left">
+                    <button
+                      onClick={() => {
+                        setIsBulkOpen(false);
+                        showToast(`Push notification dispatched to ${selectedIds.length} retailers`);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+                    >
+                      <Bell className="w-3.5 h-3.5 text-blue-500" />
+                      <span>Push Notification</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsBulkOpen(false);
+                        if (confirm(`Suspend ${selectedIds.length} selected retailers?`)) {
+                          selectedIds.forEach(id => updateStatus({ id, status: 'suspended', reason: 'Bulk Action' }));
+                          showToast(`Suspended ${selectedIds.length} retailers`);
+                        }
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-md"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                      <span>Bulk Suspend</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
         </div>
+
+        {/* Active Filter Chips */}
+        {hasActiveFilters && (
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 flex-wrap text-xs">
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Active Filters:</span>
+            {search && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-medium">
+                Search: "{search}"
+                <X className="w-3 h-3 cursor-pointer text-slate-400 hover:text-slate-600" onClick={() => { setSearch(""); setSearchInput(""); }} />
+              </span>
+            )}
+            {quickFilter !== 'All' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">
+                Scope: {quickFilter}
+                <X className="w-3 h-3 cursor-pointer text-blue-500 hover:text-blue-700" onClick={() => setQuickFilter("All")} />
+              </span>
+            )}
+            {accountTypeFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-50 text-purple-700 font-medium">
+                Account: {accountTypeFilter}
+                <X className="w-3 h-3 cursor-pointer text-purple-500 hover:text-purple-700" onClick={() => setAccountTypeFilter("all")} />
+              </span>
+            )}
+            {statusFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-medium">
+                Status: {statusFilter}
+                <X className="w-3 h-3 cursor-pointer text-slate-400 hover:text-slate-600" onClick={() => setStatusFilter("all")} />
+              </span>
+            )}
+            {kycFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-medium">
+                KYC: {kycFilter}
+                <X className="w-3 h-3 cursor-pointer text-amber-500 hover:text-amber-700" onClick={() => setKycFilter("all")} />
+              </span>
+            )}
+            <button
+              onClick={resetAllFilters}
+              className="text-xs font-semibold text-blue-600 hover:underline ml-1"
+            >
+              Clear All
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* CRM Data Table */}
-      <div className="bg-white dark:bg-slate-900 border border-[#E7ECF3] dark:border-slate-800 rounded-[18px] shadow-sm overflow-hidden">
-        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-          <table className="w-full text-left border-collapse relative">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-slate-50 dark:bg-slate-800/90 backdrop-blur-sm border-b border-[#E5E7EB] dark:border-slate-800 text-[13px] font-semibold text-slate-500 uppercase tracking-wider">
-                <th className="py-4 px-4 w-10 text-center">
+      {/* Retailers Table (Desktop) */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden hidden md:block">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50/80 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                <th className="py-3 px-4 w-8 text-center">
                   <input
                     type="checkbox"
                     checked={filteredList.length > 0 && selectedIds.length === filteredList.length}
                     onChange={toggleSelectAll}
-                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
                 </th>
-                <th className="py-4 px-4">Retailer</th>
-                <th className="py-4 px-4 text-right">Wallet</th>
-                <th className="py-4 px-4 text-right">Today's Recharge</th>
-                <th className="py-4 px-4 text-right">Monthly Recharge</th>
-                <th className="py-4 px-4 text-center">Device</th>
-                <th className="py-4 px-4 text-center">Status</th>
-                <th className="py-4 px-6 text-right">Actions</th>
+                <th className="py-3 px-4">Retailer</th>
+                <th className="py-3 px-4 text-center">Account</th>
+                <th className="py-3 px-4 text-right">Wallet Balance</th>
+                <th className="py-3 px-4 text-right">Today's Recharge</th>
+                <th className="py-3 px-4 text-right">Monthly Recharge</th>
+                <th className="py-3 px-4 text-center">Device</th>
+                <th className="py-3 px-4 text-center">Status</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {isLoading ? (
-                <tr>
-                  <td colSpan={7} className="h-64 text-center">
-                    <div className="flex flex-col items-center justify-center space-y-3">
-                      <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-                      <p className="text-sm font-semibold text-slate-500">Loading retailer directory...</p>
-                    </div>
-                  </td>
-                </tr>
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <tr key={idx} className="animate-pulse">
+                    <td className="py-3.5 px-4 text-center"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
+                    <td className="py-3.5 px-4"><div className="w-32 h-4 bg-slate-200 dark:bg-slate-800 rounded mb-1" /><div className="w-24 h-3 bg-slate-100 dark:bg-slate-800/60 rounded" /></td>
+                    <td className="py-3.5 px-4 text-center"><div className="w-14 h-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
+                    <td className="py-3.5 px-4 text-right"><div className="w-20 h-4 bg-slate-200 dark:bg-slate-800 rounded ml-auto" /></td>
+                    <td className="py-3.5 px-4 text-right"><div className="w-16 h-4 bg-slate-200 dark:bg-slate-800 rounded ml-auto" /></td>
+                    <td className="py-3.5 px-4 text-right"><div className="w-16 h-4 bg-slate-200 dark:bg-slate-800 rounded ml-auto" /></td>
+                    <td className="py-3.5 px-4 text-center"><div className="w-14 h-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
+                    <td className="py-3.5 px-4 text-center"><div className="w-16 h-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
+                    <td className="py-3.5 px-4 text-right"><div className="w-14 h-7 bg-slate-200 dark:bg-slate-800 rounded ml-auto" /></td>
+                  </tr>
+                ))
               ) : filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="h-64 text-center py-12">
-                    <div className="flex flex-col items-center justify-center space-y-3">
-                      <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center">
-                        <Users className="w-6 h-6" />
+                  <td colSpan={9} className="py-12 text-center">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center">
+                        <Users className="w-5 h-5" />
                       </div>
-                      <p className="text-base font-bold text-slate-900 dark:text-white">No Retailers Found</p>
-                      <p className="text-xs text-slate-400 max-w-sm">No agent accounts match your search or filter options.</p>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                        {search ? `No retailers match "${search}"` : 'No Retailers Found'}
+                      </p>
+                      <p className="text-xs text-slate-500 max-w-xs">
+                        Try adjusting your search criteria or resetting filters.
+                      </p>
+                      <Button onClick={resetAllFilters} variant="outline" className="h-8 px-3 text-xs font-semibold rounded-lg mt-1">
+                        Reset Filters
+                      </Button>
                     </div>
                   </td>
                 </tr>
               ) : (
                 filteredList.map((retailer) => {
                   const isSelected = selectedIds.includes(retailer._id);
+                  const isLowWallet = retailer.accountType !== 'PERSONAL' && (retailer.walletBalancePaise || 0) < 50000;
 
                   return (
                     <tr 
                       key={retailer._id} 
-                      className={`h-[90px] transition-all group ${
-                        isSelected ? 'bg-blue-50/60 dark:bg-blue-950/40' : 'hover:bg-slate-50/90 dark:hover:bg-slate-800/50'
+                      className={`transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40 text-xs ${
+                        isSelected ? 'bg-blue-50/40 dark:bg-blue-950/20' : ''
                       }`}
                     >
-                      <td className="py-4 px-4 text-center align-middle">
+                      {/* Checkbox */}
+                      <td className="py-3.5 px-4 text-center align-middle">
                         <input
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleSelectOne(retailer._id)}
-                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                          className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                         />
                       </td>
 
-                      <td className="py-4 px-4 align-middle">
-                        <div className="flex items-start gap-4">
-                          <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold text-lg flex items-center justify-center shadow-md shrink-0 mt-1">
+                      {/* Retailer Identity Column */}
+                      <td className="py-3.5 px-4 align-middle">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200 dark:border-slate-700">
                             {retailer.name ? retailer.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'RT'}
                           </div>
-                          <div className="flex flex-col space-y-1">
+                          <div className="space-y-0.5">
                             <div className="flex items-center gap-2">
-                              <Link href={`/dashboard/retailers/${retailer._id}`} className="font-bold text-[15px] text-slate-900 dark:text-white hover:text-blue-600 transition-colors">
+                              <Link href={`/dashboard/retailers/${retailer._id}`} className="font-semibold text-sm text-slate-900 dark:text-white hover:text-blue-600 transition-colors">
                                 {retailer.name}
                               </Link>
-                              <Badge 
-                                variant={
-                                  retailer.kycStatus === 'verified' ? 'success' : 
-                                  retailer.kycStatus === 'pending' ? 'warning' : 
-                                  retailer.kycStatus === 'rejected' ? 'error' : 'neutral'
-                                }
-                                className="capitalize px-1.5 py-0 text-[10px] h-4"
-                              >
-                                {retailer.kycStatus || 'No KYC'}
-                              </Badge>
-                            </div>
-                            
-                            <div className="text-xs text-slate-500 flex items-center gap-3">
-                              <button
-                                onClick={() => handleCopyId(retailer.retailerId)}
-                                className="font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors inline-flex items-center gap-1"
-                                title="Click to Copy ID"
-                              >
-                                <span>ID: {retailer.retailerId}</span>
-                                {copiedId === retailer.retailerId ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3 text-slate-400" />}
-                              </button>
-                              <span className="flex items-center gap-1"><Phone className="w-3 h-3 text-slate-400" /> {retailer.phone}</span>
-                            </div>
-                            
-                            <div className="text-xs text-slate-500 flex items-center gap-3">
-                              <span className="font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                                <Building2 className="w-3 h-3 text-slate-400" /> {retailer.shopName || '—'}
+                              <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                                {retailer.retailerId}
+                                <button onClick={() => handleCopyId(retailer.retailerId)} title="Copy ID">
+                                  {copiedId === retailer.retailerId ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3 text-slate-400 hover:text-slate-600" />}
+                                </button>
                               </span>
-                              <span className="flex items-center gap-1">
-                                <MapPin className="w-3 h-3 text-slate-400" /> {retailer.city ? `${retailer.city}${retailer.state ? `, ${retailer.state}` : ''}` : 'Not Available'}
-                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-normal">
+                              {retailer.phone} • {retailer.shopName || '—'}
                             </div>
                           </div>
                         </div>
                       </td>
 
-                      <td className="py-4 px-4 text-right align-middle">
-                        <div className="inline-block bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60 px-3 py-1.5 rounded-xl shadow-sm">
-                          <span className="font-mono font-extrabold text-[15px] text-emerald-600 dark:text-emerald-400 tabular-nums">
-                            ₹{(retailer.walletBalancePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {/* Account Type */}
+                      <td className="py-3.5 px-4 text-center align-middle">
+                        {retailer.accountType === 'BUSINESS' ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-300">
+                            <span className="w-2 h-2 rounded-full bg-indigo-500" /> Business
                           </span>
-                        </div>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-300">
+                            <span className="w-2 h-2 rounded-full bg-blue-500" /> Personal
+                          </span>
+                        )}
                       </td>
 
-                      <td className="py-4 px-4 text-right align-middle">
-                        <span className="font-mono font-bold text-[14px] text-slate-700 dark:text-slate-300 tabular-nums">
+                      {/* Wallet Balance */}
+                      <td className="py-3.5 px-4 text-right align-middle font-mono">
+                        {retailer.accountType === 'PERSONAL' ? (
+                          <span className="text-slate-400 font-normal">—</span>
+                        ) : (
+                          <div>
+                            <div className="font-semibold text-sm text-slate-900 dark:text-white">
+                              ₹{(retailer.walletBalancePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[11px] font-normal">
+                              {isLowWallet ? (
+                                <span className="text-amber-600 dark:text-amber-400 font-semibold inline-flex items-center gap-1 justify-end">
+                                  <AlertTriangle className="w-3 h-3 text-amber-500" /> Low Wallet
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">Available</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Today's Recharge */}
+                      <td className="py-3.5 px-4 text-right align-middle font-mono">
+                        <div className="font-semibold text-sm text-slate-900 dark:text-white">
                           ₹{retailer.todaysRechargePaise ? (retailer.todaysRechargePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : '0'}
-                        </span>
-                      </td>
-
-                      <td className="py-4 px-4 text-right align-middle">
-                        <span className="font-mono font-bold text-[14px] text-slate-700 dark:text-slate-300 tabular-nums">
-                          ₹{retailer.monthlyRechargePaise ? (retailer.monthlyRechargePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : '0'}
-                        </span>
-                      </td>
-
-                      <td className="py-4 px-4 text-center align-middle">
-                        <div className="flex flex-col items-center gap-1.5">
-                          {retailer.fcmToken ? (
-                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800/60" title="Device is Online/Registered">
-                              <Smartphone className="w-3.5 h-3.5" />
-                              Online
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/40 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700/60" title="Device Offline/Not Registered">
-                              <Smartphone className="w-3.5 h-3.5" />
-                              Offline
-                            </div>
-                          )}
-                          <div className="text-[10px] text-slate-400 flex items-center gap-1 max-w-[80px] truncate" title={retailer.fcmToken || "No Token"}>
-                            {retailer.fcmToken ? retailer.fcmToken.substring(0, 8) + '...' : 'No Token'}
-                          </div>
                         </div>
+                        <div className="text-[11px] text-slate-400 font-normal">Today</div>
                       </td>
 
-                      <td className="py-4 px-4 align-middle">
-                        <div className="flex flex-col items-center gap-1.5">
+                      {/* Monthly Recharge */}
+                      <td className="py-3.5 px-4 text-right align-middle font-mono">
+                        <div className="font-semibold text-sm text-slate-900 dark:text-white">
+                          ₹{retailer.monthlyRechargePaise ? (retailer.monthlyRechargePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : '0'}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-normal">This month</div>
+                      </td>
+
+                      {/* Device Online Status */}
+                      <td className="py-3.5 px-4 text-center align-middle">
+                        {retailer.fcmToken ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500" /> Online
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-normal text-slate-400">
+                            <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600" /> Offline
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Account Status */}
+                      <td className="py-3.5 px-4 text-center align-middle">
+                        <div className="flex flex-col items-center">
                           {isAccountLocked(retailer) ? (
-                            <div className="w-[100px] flex items-center justify-center gap-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 py-1.5 px-3 rounded-lg font-bold text-[11px] shadow-sm uppercase tracking-wider">
-                              <Lock className="w-3.5 h-3.5" /> Locked
-                            </div>
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 dark:text-rose-400">
+                              <Lock className="w-3 h-3 text-rose-500" /> Locked
+                            </span>
+                          ) : retailer.status === 'active' ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active
+                            </span>
+                          ) : retailer.status === 'blocked' ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Blocked
+                            </span>
                           ) : (
-                            <>
-                              {retailer.status === 'active' && (
-                                <div className="w-[100px] flex items-center justify-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 py-1.5 px-3 rounded-lg font-bold text-[11px] shadow-sm uppercase tracking-wider">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Active
-                                </div>
-                              )}
-                              {retailer.status === 'blocked' && (
-                                <div className="w-[100px] flex items-center justify-center gap-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 py-1.5 px-3 rounded-lg font-bold text-[11px] shadow-sm uppercase tracking-wider">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Blocked
-                                </div>
-                              )}
-                              {retailer.status === 'suspended' && (
-                                <div className="w-[100px] flex items-center justify-center gap-1.5 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800/60 py-1.5 px-3 rounded-lg font-bold text-[11px] shadow-sm uppercase tracking-wider">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Suspended
-                                </div>
-                              )}
-                              {(!['active', 'blocked', 'suspended'].includes(retailer.status)) && (
-                                <div className="w-[100px] flex items-center justify-center gap-1.5 bg-slate-50 dark:bg-slate-800/40 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700/60 py-1.5 px-3 rounded-lg font-bold text-[11px] shadow-sm uppercase tracking-wider">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Inactive
-                                </div>
-                              )}
-                            </>
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Suspended
+                            </span>
                           )}
-                          
-                          <span className="text-[10px] font-medium text-slate-500 text-center">
-                            {retailer.lastLogin ? `Last login: ${formatDistanceToNow(new Date(retailer.lastLogin), { addSuffix: true })}` : 'Never Logged In'}
+                          <span className="text-[10px] text-slate-400 font-normal mt-0.5">
+                            {retailer.lastLogin ? formatDistanceToNow(new Date(retailer.lastLogin), { addSuffix: true }) : 'Never logged in'}
                           </span>
                         </div>
                       </td>
 
-                      <td className="py-4 px-6 text-right align-middle relative">
-                        <div className="flex items-center justify-end gap-2">
-                          <Link href={`/dashboard/retailers/${retailer._id}`} className="p-2 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors" title="View Profile">
-                            <Eye className="w-4.5 h-4.5" />
-                          </Link>
-                          
-                          {retailer.status === 'blocked' ? (
-                            <div className="relative group flex items-center justify-center">
-                              <button disabled className="p-2 rounded-xl text-slate-300 dark:text-slate-700 cursor-not-allowed">
-                                <Wallet className="w-4.5 h-4.5" />
-                              </button>
-                              <div className="absolute bottom-full right-1/2 translate-x-1/2 mb-2 hidden group-hover:block w-max bg-slate-800 text-white text-[11px] font-medium py-1.5 px-2.5 rounded-lg shadow-xl z-50">
-                                Wallet adjustment disabled for blocked retailers
-                              </div>
-                            </div>
-                          ) : (
-                            <button onClick={() => setAdjustmentTarget({ id: retailer._id, name: retailer.name, type: "credit" })} className="p-2 rounded-xl text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors" title="Adjust Wallet">
-                              <Wallet className="w-4.5 h-4.5" />
-                            </button>
-                          )}
-                          
-                          <Link href={`/dashboard/transactions?retailer=${retailer.retailerId}`} className="p-2 rounded-xl text-slate-400 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-colors" title="History">
-                            <History className="w-4.5 h-4.5" />
+                      {/* Actions Column */}
+                      <td className="py-3.5 px-4 text-right align-middle relative">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Link href={`/dashboard/retailers/${retailer._id}`}>
+                            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs font-semibold border-slate-300 rounded-md">
+                              View
+                            </Button>
                           </Link>
                           
                           <div className="relative">
@@ -591,22 +750,22 @@ export default function RetailersPage() {
                                 e.stopPropagation();
                                 setActiveActionMenu(activeActionMenu === retailer._id ? null : retailer._id);
                               }}
-                              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
+                              className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                             >
-                              More <ChevronDown className="w-3 h-3" />
+                              <MoreVertical className="w-4 h-4" />
                             </button>
 
                             {activeActionMenu === retailer._id && (
-                              <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl rounded-2xl p-2 z-50 space-y-1 text-left animate-in fade-in zoom-in-95 duration-150">
+                              <div className="absolute right-0 mt-1.5 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl rounded-lg p-1 z-50 text-left">
                                 {isAccountLocked(retailer) && (
                                   <button
                                     onClick={() => {
                                       setActiveActionMenu(null);
                                       setUnlockModalTarget({ id: retailer._id, name: retailer.name });
                                     }}
-                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded-xl"
+                                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded-md"
                                   >
-                                    <Unlock className="w-4 h-4 text-emerald-500" />
+                                    <Unlock className="w-3.5 h-3.5 text-emerald-500" />
                                     <span>Unlock Account</span>
                                   </button>
                                 )}
@@ -614,41 +773,37 @@ export default function RetailersPage() {
                                 <button
                                   onClick={() => {
                                     setActiveActionMenu(null);
-                                    setEditingRetailer(retailer);
-                                    // TODO: Implement Edit Modal open
-                                  }}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl"
-                                >
-                                  <Edit className="w-4 h-4 text-slate-500" />
-                                  <span>Edit Retailer</span>
-                                </button>
-
-                                <button
-                                  onClick={() => {
-                                    setActiveActionMenu(null);
                                     if (retailer.status === 'blocked') {
-                                      showToast("Wallet adjustment disabled for blocked retailers");
+                                      showToast("Wallet adjustment disabled for blocked retailers", true);
                                       return;
                                     }
                                     setAdjustmentTarget({ id: retailer._id, name: retailer.name, type: "credit" });
                                   }}
                                   disabled={retailer.status === 'blocked'}
-                                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl ${
-                                    retailer.status === 'blocked' ? 'text-slate-400 opacity-50 cursor-not-allowed' : 'text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+                                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md ${
+                                    retailer.status === 'blocked' ? 'text-slate-400 opacity-50 cursor-not-allowed' : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
                                   }`}
                                 >
-                                  <Activity className="w-4 h-4 text-slate-500" />
+                                  <Wallet className="w-3.5 h-3.5 text-slate-400" />
                                   <span>Adjust Wallet</span>
                                 </button>
                                 
+                                <Link 
+                                  href={`/dashboard/transactions?retailer=${retailer.retailerId}`}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+                                >
+                                  <History className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>View Transactions</span>
+                                </Link>
+
                                 <button
                                   onClick={() => {
                                     setActiveActionMenu(null);
-                                    showToast("Password reset link sent.");
+                                    showToast("MPIN reset link sent to retailer.");
                                   }}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl"
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
                                 >
-                                  <ShieldCheck className="w-4 h-4 text-amber-500" />
+                                  <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
                                   <span>Reset MPIN</span>
                                 </button>
 
@@ -663,10 +818,10 @@ export default function RetailersPage() {
                                         showToast("Retailer suspended");
                                       }
                                     }}
-                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-xl"
+                                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-md"
                                   >
-                                    <Ban className="w-4 h-4" />
-                                    <span>Block / Suspend</span>
+                                    <Ban className="w-3.5 h-3.5" />
+                                    <span>Suspend Account</span>
                                   </button>
                                 ) : (
                                   <button
@@ -677,25 +832,12 @@ export default function RetailersPage() {
                                         showToast("Retailer re-activated");
                                       }
                                     }}
-                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded-xl"
+                                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 rounded-md"
                                   >
-                                    <CheckCircle className="w-4 h-4" />
-                                    <span>Unblock / Activate</span>
+                                    <CheckCircle className="w-3.5 h-3.5" />
+                                    <span>Activate Account</span>
                                   </button>
                                 )}
-                                
-                                <button
-                                  onClick={() => {
-                                    setActiveActionMenu(null);
-                                    if (confirm("Delete this retailer permanently?")) {
-                                      showToast("Retailer deletion initiated");
-                                    }
-                                  }}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl mt-1"
-                                >
-                                  <X className="w-4 h-4" />
-                                  <span>Delete</span>
-                                </button>
                               </div>
                             )}
                           </div>
@@ -710,44 +852,99 @@ export default function RetailersPage() {
         </div>
       </div>
 
+      {/* Mobile Card List (Small Screens) */}
+      <div className="space-y-3 md:hidden">
+        {isLoading ? (
+          <div className="p-8 text-center text-xs text-slate-400"><Loader2 className="w-5 h-5 animate-spin mx-auto text-blue-600 mb-2" /> Loading retailers...</div>
+        ) : filteredList.length === 0 ? (
+          <div className="p-6 text-center bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+            <p className="text-xs font-semibold text-slate-900 dark:text-white">No Retailers Found</p>
+            <p className="text-[11px] text-slate-400 mt-1">Try resetting your search or filters.</p>
+          </div>
+        ) : (
+          filteredList.map(r => (
+            <div key={r._id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center">
+                    {r.name ? r.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'RT'}
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-sm text-slate-900 dark:text-white">{r.name}</h4>
+                    <span className="text-[11px] text-slate-400 font-mono">{r.retailerId} • {r.phone}</span>
+                  </div>
+                </div>
+                <span className="text-[11px] font-medium text-slate-500">
+                  {r.accountType === 'BUSINESS' ? '● Business' : '● Personal'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold">Wallet</span>
+                  <p className="font-semibold font-mono text-slate-900 dark:text-white">
+                    {r.accountType === 'PERSONAL' ? '—' : `₹${(r.walletBalancePaise / 100).toFixed(2)}`}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold">Today</span>
+                  <p className="font-semibold font-mono text-slate-900 dark:text-white">
+                    ₹{r.todaysRechargePaise ? (r.todaysRechargePaise / 100).toFixed(0) : '0'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className={`text-[11px] font-semibold ${r.status === 'active' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  ● {(r.status || 'active').toUpperCase()}
+                </span>
+                <Link href={`/dashboard/retailers/${r._id}`}>
+                  <Button size="sm" className="h-7 px-3 text-xs font-semibold bg-blue-600 text-white rounded-md">View Details</Button>
+                </Link>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
       {/* Pagination Footer */}
       {data?.pagination && (
-        <div className="px-6 py-4 bg-white dark:bg-slate-900 border border-[#E7ECF3] dark:border-slate-800 rounded-[18px] shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-medium text-slate-500">
+        <div className="px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 text-xs font-medium text-slate-500">
           <div className="flex items-center gap-3">
             <span>
-              Showing <span className="font-bold text-slate-900 dark:text-white">{((page - 1) * pageSize) + 1}</span> to{" "}
-              <span className="font-bold text-slate-900 dark:text-white">{Math.min(page * pageSize, data.pagination.total)}</span> of{" "}
-              <span className="font-bold text-slate-900 dark:text-white">{data.pagination.total}</span> retailers
+              Showing <span className="font-semibold text-slate-900 dark:text-white">{((page - 1) * pageSize) + 1}</span> to{" "}
+              <span className="font-semibold text-slate-900 dark:text-white">{Math.min(page * pageSize, data.pagination.total)}</span> of{" "}
+              <span className="font-semibold text-slate-900 dark:text-white">{data.pagination.total}</span> retailers
             </span>
             <select
               value={pageSize}
               onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-              className="h-8 px-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold"
+              className="h-7 px-2 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-medium"
             >
-              <option value={20}>20 per page</option>
-              <option value={50}>50 per page</option>
-              <option value={100}>100 per page</option>
+              <option value={20}>20 / page</option>
+              <option value={50}>50 / page</option>
+              <option value={100}>100 / page</option>
             </select>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-1.5">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="h-9 px-3 border-[#E5E7EB]"
+              className="h-8 px-3 border-slate-300 text-xs font-semibold rounded-md"
             >
-              <ChevronLeft className="w-4 h-4 mr-1" /> Prev
+              <ChevronLeft className="w-3.5 h-3.5 mr-1" /> Prev
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => setPage((p) => Math.min(data.pagination.pages, p + 1))}
               disabled={page === data.pagination.pages}
-              className="h-9 px-3 border-[#E5E7EB]"
+              className="h-8 px-3 border-slate-300 text-xs font-semibold rounded-md"
             >
-              Next <ChevronRight className="w-4 h-4 ml-1" />
+              Next <ChevronRight className="w-3.5 h-3.5 ml-1" />
             </Button>
           </div>
         </div>
@@ -755,95 +952,125 @@ export default function RetailersPage() {
 
       {/* Add Retailer Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-lg w-full rounded-[24px] shadow-2xl p-6 space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-lg w-full rounded-xl shadow-xl p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">Add New Retailer</h3>
-                <p className="text-xs text-slate-500 font-medium">Create a new agent account in your network.</p>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Add New Retailer</h3>
+                <p className="text-xs text-slate-500">Create a new retailer agent account in your network.</p>
               </div>
-              <button onClick={() => setIsAddModalOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl">
-                <X className="w-5 h-5" />
+              <button onClick={() => setIsAddModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 rounded-md">
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateRetailer} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <form onSubmit={handleCreateRetailer} className="space-y-3.5 text-xs">
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Account Type *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewRetailer(prev => ({ ...prev, accountType: "PERSONAL" }))}
+                    className={`p-2 rounded-lg border text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
+                      newRetailer.accountType === "PERSONAL"
+                        ? "bg-blue-50 dark:bg-blue-950/40 border-blue-500 text-blue-700 dark:text-blue-300"
+                        : "bg-slate-50 dark:bg-slate-800 border-slate-200 text-slate-600"
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                    Personal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewRetailer(prev => ({ ...prev, accountType: "BUSINESS" }))}
+                    className={`p-2 rounded-lg border text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
+                      newRetailer.accountType === "BUSINESS"
+                        ? "bg-purple-50 dark:bg-purple-950/40 border-purple-500 text-purple-700 dark:text-purple-300"
+                        : "bg-slate-50 dark:bg-slate-800 border-slate-200 text-slate-600"
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-purple-600"></span>
+                    Business
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">Full Name *</label>
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Full Name *</label>
                   <input
                     type="text"
                     required
                     placeholder="e.g. Rahul Sharma"
                     value={newRetailer.name}
                     onChange={(e) => setNewRetailer(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full p-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">Phone Number *</label>
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Phone Number *</label>
                   <input
                     type="text"
                     required
                     placeholder="9876543210"
                     value={newRetailer.phone}
                     onChange={(e) => setNewRetailer(prev => ({ ...prev, phone: e.target.value }))}
-                    className="w-full p-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">Email Address</label>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Email Address</label>
                 <input
                   type="email"
                   placeholder="rahul@example.com"
                   value={newRetailer.email}
                   onChange={(e) => setNewRetailer(prev => ({ ...prev, email: e.target.value }))}
-                  className="w-full p-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">Shop / Business Name</label>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">Shop / Business Name</label>
                 <input
                   type="text"
                   placeholder="e.g. Sharma Mobile Store"
                   value={newRetailer.shopName}
                   onChange={(e) => setNewRetailer(prev => ({ ...prev, shopName: e.target.value }))}
-                  className="w-full p-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                  className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">City</label>
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">City</label>
                   <input
                     type="text"
                     placeholder="Mumbai"
                     value={newRetailer.city}
                     onChange={(e) => setNewRetailer(prev => ({ ...prev, city: e.target.value }))}
-                    className="w-full p-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">State</label>
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">State</label>
                   <input
                     type="text"
                     placeholder="Maharashtra"
                     value={newRetailer.state}
                     onChange={(e) => setNewRetailer(prev => ({ ...prev, state: e.target.value }))}
-                    className="w-full p-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                <Button type="button" onClick={() => setIsAddModalOpen(false)} variant="outline">
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <Button type="button" onClick={() => setIsAddModalOpen(false)} variant="outline" className="h-8 px-3 text-xs font-semibold rounded-md">
                   Cancel
                 </Button>
-                <Button type="submit" disabled={isCreating || !newRetailer.name || !newRetailer.phone} className="bg-blue-600 text-white font-bold">
-                  {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create Retailer"}
+                <Button type="submit" disabled={isCreating || !newRetailer.name || !newRetailer.phone} className="h-8 px-4 bg-blue-600 text-white font-semibold text-xs rounded-md">
+                  {isCreating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Create Retailer"}
                 </Button>
               </div>
             </form>
@@ -864,30 +1091,29 @@ export default function RetailersPage() {
 
       {/* Unlock Retailer Account Confirmation Modal */}
       {unlockModalTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-md w-full rounded-[24px] shadow-2xl p-6 space-y-5">
-            <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-                <Unlock className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-sm w-full rounded-xl shadow-xl p-5 space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                <Unlock className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">Unlock Retailer Account</h3>
-                <p className="text-xs text-slate-500 font-medium">{unlockModalTarget.name}</p>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Unlock Account</h3>
+                <p className="text-xs text-slate-500">{unlockModalTarget.name}</p>
               </div>
             </div>
 
-            <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
-              <p>Are you sure you want to unlock this retailer account?</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">This will immediately allow the retailer to log in again.</p>
-            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Are you sure you want to unlock this retailer account? They will immediately be able to log in again.
+            </p>
 
-            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => setUnlockModalTarget(null)}
                 disabled={isUnlocking}
-                className="h-10 px-4 font-semibold text-xs rounded-xl"
+                className="h-8 px-3 text-xs font-semibold rounded-md"
               >
                 Cancel
               </Button>
@@ -902,14 +1128,14 @@ export default function RetailersPage() {
                       refetch();
                     },
                     onError: (err: any) => {
-                      alert(err?.response?.data?.message || err.message || "Failed to unlock retailer account");
+                      showToast(err?.response?.data?.message || err.message || "Failed to unlock account", true);
                     }
                   });
                 }}
                 disabled={isUnlocking}
-                className="h-10 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md"
+                className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-md shadow-sm"
               >
-                {isUnlocking ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Unlock className="w-4 h-4 mr-1.5" />}
+                {isUnlocking ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Unlock className="w-3.5 h-3.5 mr-1" />}
                 Unlock Account
               </Button>
             </div>

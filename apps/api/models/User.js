@@ -17,6 +17,12 @@ const userSchema = new mongoose.Schema(
       enum: ['retailer', 'distributor', 'admin'],
       default: 'retailer',
     },
+    accountType: {
+      type: String,
+      enum: ['PERSONAL', 'BUSINESS'],
+      default: 'PERSONAL',
+      index: true,
+    },
     status: {
       type: String,
       enum: ['active', 'suspended', 'blocked'],
@@ -271,6 +277,9 @@ userSchema.methods.toSafeJSON = function toSafeJSON() {
     panNumber: mask(this.panNumber),
     gstNumber: this.gstNumber ? mask(this.gstNumber) : null,
     kycStatus: this.kycStatus,
+    accountType: (this.accountType && ['PERSONAL', 'BUSINESS'].includes(this.accountType.toUpperCase()))
+      ? this.accountType.toUpperCase()
+      : ((this.shopName || this.businessType || this.gstNumber) ? 'BUSINESS' : 'PERSONAL'),
     isOnboarded: this.isOnboarded,
     isVerified: this.isVerified,
     hasMpin: !!this.mpinHash,

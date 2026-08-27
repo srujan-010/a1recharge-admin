@@ -10,6 +10,7 @@ export interface Retailer {
   shopName?: string;
   city?: string;
   state?: string;
+  accountType?: 'PERSONAL' | 'BUSINESS';
   status: 'active' | 'suspended' | 'blocked';
   kycStatus: 'pending' | 'verified' | 'rejected' | 'none';
   walletBalancePaise: number;
@@ -43,12 +44,12 @@ export interface RetailersResponse {
   };
 }
 
-export function useRetailersList(page = 1, limit = 20, search = '', status = 'all') {
+export function useRetailersList(page = 1, limit = 20, search = '', status = 'all', accountType = 'all') {
   return useQuery({
-    queryKey: ['retailers', page, limit, search, status],
+    queryKey: ['retailers', page, limit, search, status, accountType],
     queryFn: async () => {
       const { data } = await api.get<RetailersResponse>('/admin/retailers', {
-        params: { page, limit, search, status }
+        params: { page, limit, search, status, accountType }
       });
       return data;
     },
@@ -81,6 +82,20 @@ export function useUpdateRetailerStatus() {
   });
 }
 
+export function useUpdateRetailerAccountType() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, accountType }: { id: string; accountType: 'PERSONAL' | 'BUSINESS' }) => {
+      const { data } = await api.put(`/admin/retailers/${id}/account-type`, { accountType });
+      return data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['retailers'] });
+      queryClient.invalidateQueries({ queryKey: ['retailer', variables.id] });
+    },
+  });
+}
+
 export function useUnlockRetailerAccount() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -95,6 +110,80 @@ export function useUnlockRetailerAccount() {
   });
 }
 
+export function useUpdateRetailerProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...payload }: { id: string; name?: string; phone?: string; email?: string; shopName?: string; city?: string; state?: string; accountType?: 'PERSONAL' | 'BUSINESS' }) => {
+      const { data } = await api.put(`/admin/retailers/${id}`, payload);
+      return data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['retailers'] });
+      queryClient.invalidateQueries({ queryKey: ['retailer', variables.id] });
+    },
+  });
+}
+
+export function useDeleteRetailer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.delete(`/admin/retailers/${id}`);
+      return data;
+    },
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['retailers'] });
+      queryClient.invalidateQueries({ queryKey: ['retailer', id] });
+    },
+  });
+}
+
+export function useResetRetailerSecurity() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.post(`/admin/retailers/${id}/reset-security`);
+      return data;
+    },
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['retailers'] });
+      queryClient.invalidateQueries({ queryKey: ['retailer', id] });
+    },
+  });
+}
+
+export function useRevokeRetailerSessions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.post(`/admin/retailers/${id}/revoke-sessions`);
+      return data;
+    },
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['retailers'] });
+      queryClient.invalidateQueries({ queryKey: ['retailer', id] });
+    },
+  });
+}
+
+export function useSendPushNotification() {
+  return useMutation({
+    mutationFn: async ({ recipients, title, body }: { recipients: string[]; title: string; body: string }) => {
+      const { data } = await api.post('/admin/push-notifications/send', { recipients, title, body });
+      return data;
+    },
+  });
+}
+
+export function useSendDirectSMS() {
+  return useMutation({
+    mutationFn: async ({ userId, phone, message }: { userId?: string; phone?: string; message: string }) => {
+      const { data } = await api.post('/admin/notifications/send-sms', { userId, phone, message });
+      return data;
+    },
+  });
+}
+
 export function useCreateRetailer() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -105,6 +194,7 @@ export function useCreateRetailer() {
       shopName?: string;
       city?: string;
       state?: string;
+      accountType?: 'PERSONAL' | 'BUSINESS';
     }) => {
       const { data } = await api.post('/auth/register', payload);
       return data;

@@ -47,35 +47,23 @@ class FinancialAnalyticsService {
       },
       {
         $lookup: {
-          from: 'operatorcommissions',
-          localField: 'operatorCode',
-          foreignField: 'operatorCode',
-          as: 'commissionDetails'
+          from: 'commissionhistories',
+          localField: '_id',
+          foreignField: 'transactionId',
+          as: 'commissionDoc'
         }
       },
       {
         $unwind: {
-          path: '$commissionDetails',
+          path: '$commissionDoc',
           preserveNullAndEmptyArrays: true
         }
       },
       {
         $project: {
-          amount: 1, // Amount is in RUPEES
-          // Calculate provider commission (Rupees)
-          providerCommission: {
-            $ifNull: [
-              { $multiply: ['$amount', { $divide: ['$commissionDetails.providerCommission', 100] }] },
-              0
-            ]
-          },
-          // Calculate retailer commission (Rupees)
-          retailerCommission: {
-            $ifNull: [
-              { $multiply: ['$amount', { $divide: ['$commissionDetails.retailerCommission', 100] }] },
-              0
-            ]
-          }
+          amount: 1, // Amount in RUPEES
+          providerCommission: { $ifNull: ['$commissionDoc.providerCommissionAmount', 0] },
+          retailerCommission: { $ifNull: ['$commissionDoc.retailerCommissionAmount', 0] }
         }
       },
       {

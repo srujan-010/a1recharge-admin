@@ -6,6 +6,11 @@ const transactionSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  accountType: {
+    type: String,
+    enum: ['PERSONAL', 'BUSINESS'],
+    default: 'PERSONAL',
+  },
   type: {
     type: String,
     enum: ['credit', 'debit'],

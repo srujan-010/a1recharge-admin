@@ -105,6 +105,12 @@ whatsappStatusWorker.start();
 const planapiSyncWorker = require('./workers/planapiSyncWorker');
 planapiSyncWorker.start();
 
+const planApiWalletMonitorWorker = require('./workers/planApiWalletMonitorWorker');
+planApiWalletMonitorWorker.start();
+
+const fast2SMSWalletMonitorWorker = require('./workers/fast2SMSWalletMonitorWorker');
+fast2SMSWalletMonitorWorker.start();
+
 const PORT = process.env.ADMIN_PORT || 5001;
 
 const server = http.createServer(app);

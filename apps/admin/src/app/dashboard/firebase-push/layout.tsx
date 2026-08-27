@@ -23,18 +23,18 @@ export default function FirebasePushLayout({
 
   return (
     <div className="space-y-6 max-w-full mx-auto pb-20">
-      <div className="space-y-2">
-        <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent leading-tight flex items-center gap-3">
+      <div className="space-y-1">
+        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-orange-500 via-amber-500 to-yellow-500 bg-clip-text text-transparent leading-tight flex items-center gap-3">
           Firebase Push Notifications
         </h1>
-        <p className="text-[15px] font-medium text-slate-500 dark:text-slate-400 max-w-2xl">
+        <p className="text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400 max-w-2xl">
           Send native Android push notifications to your retailers. Schedule campaigns, track delivery rates, and manage device registrations via FCM v1.
         </p>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs Subnav */}
       <div className="border-b border-slate-200 dark:border-slate-800">
-        <nav className="-mb-px flex space-x-6 overflow-x-auto custom-scrollbar" aria-label="Tabs">
+        <nav className="-mb-px flex space-x-4 sm:space-x-6 overflow-x-auto custom-scrollbar no-scrollbar-on-desktop" aria-label="Tabs">
           {tabs.map((tab) => {
             const isActive = pathname === tab.href;
             return (
@@ -43,12 +43,12 @@ export default function FirebasePushLayout({
                 href={tab.href}
                 className={cn(
                   isActive
-                    ? "border-orange-500 text-orange-600 dark:text-orange-500"
-                    : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-300",
-                  "group inline-flex items-center gap-2 border-b-2 py-4 px-2 text-sm font-bold whitespace-nowrap transition-colors"
+                    ? "border-orange-500 text-orange-600 dark:text-orange-400 font-bold"
+                    : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 dark:text-slate-400 dark:hover:text-slate-300 font-semibold",
+                  "group inline-flex items-center gap-2 border-b-2 py-3.5 px-1 text-xs sm:text-sm whitespace-nowrap transition-colors"
                 )}
               >
-                <tab.icon className="w-4 h-4" />
+                <tab.icon className="w-4 h-4 shrink-0" />
                 {tab.name}
               </Link>
             );

@@ -299,12 +299,17 @@ const registerRetailer = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const hashedMpin = await bcrypt.hash(mpin, salt);
 
+    const derivedAccountType = req.body.accountType && ['PERSONAL', 'BUSINESS'].includes(req.body.accountType.toUpperCase())
+      ? req.body.accountType.toUpperCase()
+      : ((shopName?.trim() || gstNumber?.trim()) ? 'BUSINESS' : 'PERSONAL');
+
     const user = await User.create({
       retailerId,
       firebaseUid: uid,
       phone: phone_number,
       name: name.trim(),
       email: email ? email.trim().toLowerCase() : null,
+      accountType: derivedAccountType,
       shopName: shopName?.trim() ?? null,
       shopAddress: shopAddress?.trim() ?? null,
       city: city?.trim() ?? null,

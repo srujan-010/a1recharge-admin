@@ -214,19 +214,51 @@ export function useSendWhatsAppCampaign() {
   });
 }
 
-export function useWhatsAppHistory(params?: { search?: string; status?: string; limit?: number }) {
+export function useWhatsAppHistory(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+  source?: string;
+  period?: string;
+  from?: string;
+  to?: string;
+}) {
   return useQuery({
     queryKey: ['whatsAppHistory', params],
     queryFn: async () => {
       const queryParams = new URLSearchParams();
+      if (params?.page) queryParams.set('page', String(params.page));
+      if (params?.limit) queryParams.set('limit', String(params.limit));
       if (params?.search) queryParams.set('search', params.search);
       if (params?.status) queryParams.set('status', params.status);
-      if (params?.limit) queryParams.set('limit', String(params.limit));
+      if (params?.source) queryParams.set('source', params.source);
+      if (params?.period) queryParams.set('period', params.period);
+      if (params?.from) queryParams.set('from', params.from);
+      if (params?.to) queryParams.set('to', params.to);
 
-      const { data } = await api.get<{ success: boolean; count: number; data: WhatsAppCampaignLog[] }>(
-        `/admin/whatsapp/history?${queryParams.toString()}`
-      );
-      return data.data;
+      const { data } = await api.get<{
+        success: boolean;
+        count: number;
+        pagination?: { page: number; limit: number; total: number; pages: number; hasMore: boolean };
+        data: WhatsAppCampaignLog[];
+      }>(`/admin/whatsapp/history?${queryParams.toString()}`);
+
+      const logsList = (data.data || []) as WhatsAppCampaignLog[] & {
+        pagination?: { page: number; limit: number; total: number; pages: number; hasMore: boolean };
+        logs?: WhatsAppCampaignLog[];
+      };
+
+      logsList.pagination = data.pagination || {
+        page: 1,
+        limit: params?.limit || 25,
+        total: data.count || logsList.length,
+        pages: 1,
+        hasMore: false,
+      };
+      logsList.logs = logsList;
+
+      return logsList;
     },
   });
 }

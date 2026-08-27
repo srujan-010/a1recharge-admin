@@ -8,7 +8,9 @@ export interface TransactionEntry {
     name: string;
     retailerId: string;
     phone: string;
+    accountType?: 'PERSONAL' | 'BUSINESS';
   };
+  accountType?: 'PERSONAL' | 'BUSINESS';
   type: 'credit' | 'debit';
   amountPaise: number;
   status: 'success' | 'pending' | 'failed' | 'reversed';
@@ -36,12 +38,12 @@ export interface TransactionsResponse {
   };
 }
 
-export function useGlobalTransactions(page = 1, limit = 20, search = '', status = 'all', retailerId = '', service = '', showTest = false) {
+export function useGlobalTransactions(page = 1, limit = 20, search = '', status = 'all', retailerId = '', service = '', showTest = false, accountType = 'all') {
   return useQuery({
-    queryKey: ['global-transactions', page, limit, search, status, retailerId, service, showTest],
+    queryKey: ['global-transactions', page, limit, search, status, retailerId, service, showTest, accountType],
     queryFn: async () => {
       const { data } = await api.get<TransactionsResponse>('/admin/transactions', {
-        params: { page, limit, search, status, retailer: retailerId, service, showTest }
+        params: { page, limit, search, status, retailer: retailerId, service, showTest, accountType }
       });
       return data;
     },
@@ -49,12 +51,12 @@ export function useGlobalTransactions(page = 1, limit = 20, search = '', status 
   });
 }
 
-export function useRecharges(page = 1, limit = 20, search = '', status = 'all', operator = '', startDate = '', endDate = '') {
+export function useRecharges(page = 1, limit = 20, search = '', status = 'all', operator = '', startDate = '', endDate = '', accountType = 'all') {
   return useQuery({
-    queryKey: ['recharges', page, limit, search, status, operator, startDate, endDate],
+    queryKey: ['recharges', page, limit, search, status, operator, startDate, endDate, accountType],
     queryFn: async () => {
       const { data } = await api.get('/admin/recharges', {
-        params: { page, limit, search, status, operator, startDate, endDate }
+        params: { page, limit, search, status, operator, startDate, endDate, accountType }
       });
       return data;
     },

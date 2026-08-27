@@ -2,10 +2,15 @@ const mongoose = require('mongoose');
 
 const operatorCommissionSchema = new mongoose.Schema(
   {
+    accountType: {
+      type: String,
+      enum: ['PERSONAL', 'BUSINESS'],
+      default: 'PERSONAL',
+      required: true,
+    },
     operatorCode: {
       type: String,
       required: true,
-      unique: true,
     },
     operatorName: {
       type: String,
@@ -37,6 +42,8 @@ const operatorCommissionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+operatorCommissionSchema.index({ accountType: 1, operatorCode: 1 }, { unique: true });
 
 const OperatorCommission = mongoose.model('OperatorCommission', operatorCommissionSchema);
 module.exports = OperatorCommission;

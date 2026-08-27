@@ -4,10 +4,25 @@ const WalletLedger = require('../../models/WalletLedger');
 const Kyc = require('../../models/Kyc');
 const Bank = require('../../models/Bank');
 const Transaction = require('../../models/Transaction');
+const RechargeTransaction = require('../../models/RechargeTransaction');
 const CommissionHistory = require('../../models/CommissionHistory');
 const { logAudit } = require('../../utils/auditHelper');
 const NotificationService = require('../../services/notification.service');
 const OtpSession = require('../../models/OtpSession');
+
+function getISTDateRanges() {
+  const now = new Date();
+  const istOffsetMs = 5.5 * 3600 * 1000;
+  const istNow = new Date(now.getTime() + istOffsetMs);
+
+  const istTodayStart = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate(), 0, 0, 0, 0));
+  const startOfToday = new Date(istTodayStart.getTime() - istOffsetMs);
+
+  const istMonthStart = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), 1, 0, 0, 0, 0));
+  const startOfMonth = new Date(istMonthStart.getTime() - istOffsetMs);
+
+  return { startOfToday, startOfMonth };
+}
 
 // @desc    Get all retailers (Paginated & Searchable)
 // @route   GET /api/admin/retailers
@@ -18,8 +33,13 @@ const getRetailers = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 20;
     const search = req.query.search || '';
     const status = req.query.status || '';
+    const accountType = req.query.accountType || '';
 
     const query = { role: 'retailer' };
+
+    if (accountType && accountType !== 'all') {
+      query.accountType = accountType.toUpperCase();
+    }
 
     if (search) {
       query.$or = [
@@ -50,22 +70,16 @@ const getRetailers = async (req, res, next) => {
     const userIds = retailers.map(r => r._id);
     const wallets = await Wallet.find({ userId: { $in: userIds } }).lean();
     
-    // Calculate Today's & Monthly Recharge
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    // Calculate Today's & Monthly Recharge using IST timezone boundaries
+    const { startOfToday, startOfMonth } = getISTDateRanges();
 
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-
-    const rechargeStats = await Transaction.aggregate([
+    const rechargeStats = await RechargeTransaction.aggregate([
       {
         $match: {
           userId: { $in: userIds },
-          status: 'success',
-          type: 'debit',
+          status: 'SUCCESS',
           isTest: { $ne: true },
-          service: { $nin: ['wallet_topup', 'commission', 'refund', 'manual_adjustment', 'admin_credit', 'admin_debit', 'system_credit', 'ledger_entry'] },
+          orderId: { $not: /^TEST/i },
           createdAt: { $gte: startOfMonth }
         }
       },
@@ -74,11 +88,11 @@ const getRetailers = async (req, res, next) => {
           _id: '$userId',
           todaysRechargePaise: {
             $sum: {
-              $cond: [{ $gte: ['$createdAt', startOfToday] }, '$amountPaise', 0]
+              $cond: [{ $gte: ['$createdAt', startOfToday] }, { $multiply: ['$amount', 100] }, 0]
             }
           },
           monthlyRechargePaise: {
-            $sum: '$amountPaise'
+            $sum: { $multiply: ['$amount', 100] }
           }
         }
       }
@@ -98,12 +112,21 @@ const getRetailers = async (req, res, next) => {
       return acc;
     }, {});
 
-    const enrichedRetailers = retailers.map(r => ({
-      ...r,
-      walletBalancePaise: walletMap[r._id.toString()] || 0,
-      todaysRechargePaise: statsMap[r._id.toString()]?.todaysRechargePaise || 0,
-      monthlyRechargePaise: statsMap[r._id.toString()]?.monthlyRechargePaise || 0
-    }));
+    const enrichedRetailers = retailers.map(r => {
+      let normAccountType = r.accountType;
+      if (!normAccountType || !['PERSONAL', 'BUSINESS'].includes(normAccountType.toUpperCase())) {
+        normAccountType = (r.shopName || r.businessType || r.gstNumber) ? 'BUSINESS' : 'PERSONAL';
+      } else {
+        normAccountType = normAccountType.toUpperCase();
+      }
+      return {
+        ...r,
+        accountType: normAccountType,
+        walletBalancePaise: walletMap[r._id.toString()] || 0,
+        todaysRechargePaise: statsMap[r._id.toString()]?.todaysRechargePaise || 0,
+        monthlyRechargePaise: statsMap[r._id.toString()]?.monthlyRechargePaise || 0
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -134,45 +157,39 @@ const getRetailerById = async (req, res, next) => {
       throw new Error('Retailer not found');
     }
 
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
+    const { startOfToday, startOfMonth } = getISTDateRanges();
 
     // Parallel fetch related data
     const [
-      wallet, kyc, bank, recentTxns, lastLogins,
+      wallet, kyc, bank, recentRawTxns, lastLogins,
       txnStats, commissionStats, ledgerStats
     ] = await Promise.all([
       Wallet.findOne({ userId: retailer._id }).lean(),
       Kyc.findOne({ userId: retailer._id }).lean(),
       Bank.findOne({ userId: retailer._id }).lean(),
-      Transaction.find({ userId: retailer._id })
+      RechargeTransaction.find({ userId: retailer._id, isTest: { $ne: true }, orderId: { $not: /^TEST/i } })
         .sort({ createdAt: -1 })
         .limit(50)
         .lean(),
-      // Mocking last logins for now until we have an AuthLog collection
       Promise.resolve([]),
       
       // Transaction Aggregations
-      Transaction.aggregate([
+      RechargeTransaction.aggregate([
         { $match: { 
           userId: retailer._id, 
           isTest: { $ne: true },
-          service: { $nin: ['wallet_topup', 'commission', 'refund', 'manual_adjustment', 'admin_credit', 'admin_debit', 'system_credit', 'ledger_entry'] }
+          orderId: { $not: /^TEST/i }
         } },
         {
           $group: {
             _id: null,
-            lifetimeRecharge: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, '$amountPaise', 0] } },
-            todaysRecharge: { $sum: { $cond: [{ $and: [{ $eq: ['$status', 'success'] }, { $gte: ['$createdAt', startOfToday] }] }, '$amountPaise', 0] } },
-            monthlyRecharge: { $sum: { $cond: [{ $and: [{ $eq: ['$status', 'success'] }, { $gte: ['$createdAt', startOfMonth] }] }, '$amountPaise', 0] } },
-            successfulRecharges: { $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] } },
-            failedRecharges: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
-            pendingRecharges: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
-            highestRecharge: { $max: { $cond: [{ $eq: ['$status', 'success'] }, '$amountPaise', 0] } }
+            lifetimeRecharge: { $sum: { $cond: [{ $eq: ['$status', 'SUCCESS'] }, { $multiply: ['$amount', 100] }, 0] } },
+            todaysRecharge: { $sum: { $cond: [{ $and: [{ $eq: ['$status', 'SUCCESS'] }, { $gte: ['$createdAt', startOfToday] }] }, { $multiply: ['$amount', 100] }, 0] } },
+            monthlyRecharge: { $sum: { $cond: [{ $and: [{ $eq: ['$status', 'SUCCESS'] }, { $gte: ['$createdAt', startOfMonth] }] }, { $multiply: ['$amount', 100] }, 0] } },
+            successfulRecharges: { $sum: { $cond: [{ $eq: ['$status', 'SUCCESS'] }, 1, 0] } },
+            failedRecharges: { $sum: { $cond: [{ $eq: ['$status', 'FAILED'] }, 1, 0] } },
+            pendingRecharges: { $sum: { $cond: [{ $eq: ['$status', 'PENDING'] }, 1, 0] } },
+            highestRecharge: { $max: { $cond: [{ $eq: ['$status', 'SUCCESS'] }, { $multiply: ['$amount', 100] }, 0] } }
           }
         }
       ]),
@@ -182,15 +199,14 @@ const getRetailerById = async (req, res, next) => {
         { $match: { userId: retailer._id } },
         {
           $lookup: {
-            from: 'transactions',
+            from: 'rechargetransactions',
             localField: 'transactionId',
             foreignField: '_id',
             as: 'txn'
           }
         },
         { $unwind: { path: '$txn', preserveNullAndEmptyArrays: true } },
-        // Only count for success transactions
-        { $match: { 'txn.status': 'success' } },
+        { $match: { 'txn.status': 'SUCCESS' } },
         {
           $group: {
             _id: null,
@@ -217,6 +233,28 @@ const getRetailerById = async (req, res, next) => {
       ])
     ]);
 
+    // Attach CommissionHistory fields to recent transactions
+    const recentTxnIds = recentRawTxns.map(t => t._id);
+    const commHistoryList = await CommissionHistory.find({ transactionId: { $in: recentTxnIds } }).lean();
+    const commMap = {};
+    commHistoryList.forEach(c => {
+      commMap[c.transactionId.toString()] = c;
+    });
+
+    const recentTxns = recentRawTxns.map(t => {
+      const c = commMap[t._id.toString()] || {};
+      return {
+        ...t,
+        amountPaise: (t.amount || 0) * 100,
+        referenceId: t.orderId,
+        operatorName: t.internalOperatorName || t.operatorCode || 'Recharge',
+        retailerCommissionAmount: c.retailerCommissionAmount || 0,
+        providerCommissionAmount: c.providerCommissionAmount || 0,
+        companyProfitAmount: c.companyProfitAmount || 0,
+        commissionEarnedPaise: (c.retailerCommissionAmount || 0) * 100,
+      };
+    });
+
     const tx = txnStats[0] || {};
     const comm = commissionStats[0] || {};
     const led = ledgerStats[0] || {};
@@ -229,6 +267,9 @@ const getRetailerById = async (req, res, next) => {
       success: true,
       data: {
         ...retailer,
+        accountType: (retailer.accountType && ['PERSONAL', 'BUSINESS'].includes(retailer.accountType.toUpperCase()))
+          ? retailer.accountType.toUpperCase()
+          : ((retailer.shopName || retailer.businessType || retailer.gstNumber) ? 'BUSINESS' : 'PERSONAL'),
         wallet: wallet || { balancePaise: 0, onHoldPaise: 0, updatedAt: new Date() },
         kyc: kyc || { status: retailer.kycStatus, documents: [] },
         bank: bank || null,
@@ -311,6 +352,50 @@ const updateRetailerStatus = async (req, res, next) => {
   }
 };
 
+// @desc    Update retailer account type (e.g. PERSONAL, BUSINESS)
+// @route   PUT /api/admin/retailers/:id/account-type
+// @access  Private (Admin)
+const updateRetailerAccountType = async (req, res, next) => {
+  try {
+    const { accountType } = req.body;
+    
+    if (!accountType || !['PERSONAL', 'BUSINESS'].includes(accountType.toUpperCase())) {
+      res.status(400);
+      throw new Error('Invalid account type.');
+    }
+
+    const upperAccType = accountType.toUpperCase();
+    const retailer = await User.findById(req.params.id);
+    if (!retailer) {
+      res.status(404);
+      throw new Error('Retailer not found');
+    }
+
+    const oldAccountType = retailer.accountType || 'PERSONAL';
+    retailer.accountType = upperAccType;
+    await retailer.save();
+
+    // Audit log this critical action
+    await logAudit(
+      req.admin, 
+      `CHANGE_ACCOUNT_TYPE`, 
+      'RETAILER', 
+      { accountType: oldAccountType }, 
+      { accountType: retailer.accountType }, 
+      req,
+      retailer._id
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `Retailer account type updated to ${upperAccType}`,
+      data: retailer.toSafeJSON ? retailer.toSafeJSON() : retailer
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Unlock a locked retailer account
 // @route   POST /api/admin/retailers/:id/unlock
 // @access  Private (Super Admin / Admin)
@@ -377,9 +462,184 @@ const unlockRetailerAccount = async (req, res, next) => {
   }
 };
 
+// @desc    Update retailer profile details
+// @route   PUT /api/admin/retailers/:id
+// @access  Private (Admin)
+const updateRetailerProfile = async (req, res, next) => {
+  try {
+    const { name, phone, email, shopName, city, state, accountType } = req.body;
+    const retailer = await User.findById(req.params.id);
+
+    if (!retailer) {
+      res.status(404);
+      throw new Error('Retailer not found');
+    }
+
+    const oldData = {
+      name: retailer.name,
+      phone: retailer.phone,
+      email: retailer.email,
+      shopName: retailer.shopName,
+      city: retailer.city,
+      state: retailer.state,
+      accountType: retailer.accountType,
+    };
+
+    if (name !== undefined) retailer.name = name.trim();
+    if (phone !== undefined) retailer.phone = phone.trim();
+    if (email !== undefined) retailer.email = email.trim();
+    if (shopName !== undefined) retailer.shopName = shopName.trim();
+    if (city !== undefined) retailer.city = city.trim();
+    if (state !== undefined) retailer.state = state.trim();
+    if (accountType !== undefined && ['PERSONAL', 'BUSINESS'].includes(accountType.toUpperCase())) {
+      retailer.accountType = accountType.toUpperCase();
+    }
+
+    await retailer.save();
+
+    await logAudit(
+      req.admin,
+      'UPDATE_RETAILER',
+      'Retailer',
+      oldData,
+      {
+        name: retailer.name,
+        phone: retailer.phone,
+        email: retailer.email,
+        shopName: retailer.shopName,
+        city: retailer.city,
+        state: retailer.state,
+        accountType: retailer.accountType,
+      },
+      req,
+      retailer._id
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Retailer profile updated successfully.',
+      data: retailer.toSafeJSON ? retailer.toSafeJSON() : retailer,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Soft Delete Retailer
+// @route   DELETE /api/admin/retailers/:id
+// @access  Private (Super Admin)
+const deleteRetailer = async (req, res, next) => {
+  try {
+    const retailer = await User.findById(req.params.id);
+    if (!retailer) {
+      res.status(404);
+      throw new Error('Retailer not found');
+    }
+
+    retailer.status = 'blocked';
+    retailer.isDeleted = true;
+    retailer.deletedAt = new Date();
+    await retailer.save();
+
+    await logAudit(
+      req.admin,
+      'DELETE_RETAILER',
+      'Retailer',
+      { retailerId: retailer.retailerId, status: retailer.status },
+      { isDeleted: true, status: 'blocked' },
+      req,
+      retailer._id
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Retailer account deleted (deactivated) successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reset Retailer Security (MPIN & Password)
+// @route   POST /api/admin/retailers/:id/reset-security
+// @access  Private (Admin)
+const resetRetailerSecurity = async (req, res, next) => {
+  try {
+    const retailer = await User.findById(req.params.id);
+    if (!retailer) {
+      res.status(404);
+      throw new Error('Retailer not found');
+    }
+
+    retailer.failedMpinAttempts = 0;
+    retailer.failedLoginAttempts = 0;
+    retailer.isLocked = false;
+    retailer.lockUntil = null;
+    retailer.lockReason = null;
+    retailer.mpinHash = undefined; // Force MPIN reset on next login
+    await retailer.save();
+
+    await logAudit(
+      req.admin,
+      'RESET_SECURITY',
+      'Retailer',
+      null,
+      { retailerId: retailer.retailerId, action: 'RESET_SECURITY' },
+      req,
+      retailer._id
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Security credentials and MPIN lock reset successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Revoke Retailer Active Sessions & FCM Token
+// @route   POST /api/admin/retailers/:id/revoke-sessions
+// @access  Private (Admin)
+const revokeRetailerSessions = async (req, res, next) => {
+  try {
+    const retailer = await User.findById(req.params.id);
+    if (!retailer) {
+      res.status(404);
+      throw new Error('Retailer not found');
+    }
+
+    retailer.fcmToken = null;
+    retailer.tokenVersion = (retailer.tokenVersion || 0) + 1;
+    await retailer.save();
+
+    await logAudit(
+      req.admin,
+      'REVOKE_SESSIONS',
+      'Retailer',
+      null,
+      { retailerId: retailer.retailerId, tokenVersion: retailer.tokenVersion },
+      req,
+      retailer._id
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Active retailer sessions and device tokens revoked successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getRetailers,
   getRetailerById,
   updateRetailerStatus,
-  unlockRetailerAccount
+  updateRetailerAccountType,
+  unlockRetailerAccount,
+  updateRetailerProfile,
+  deleteRetailer,
+  resetRetailerSecurity,
+  revokeRetailerSessions,
 };

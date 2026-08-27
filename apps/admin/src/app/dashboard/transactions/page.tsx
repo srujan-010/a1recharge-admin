@@ -18,6 +18,8 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { AccountTypeBadge } from "@/components/ui/account-type-badge";
+import { AccountTypeFilter, AccountTypeFilterValue } from "@/components/ui/account-type-filter";
 
 function TransactionsContent() {
   const searchParams = useSearchParams();
@@ -29,8 +31,9 @@ function TransactionsContent() {
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState("all");
   const [showTest, setShowTest] = useState(false);
+  const [accountTypeFilter, setAccountTypeFilter] = useState<AccountTypeFilterValue>("all");
 
-  const { data, isLoading } = useGlobalTransactions(page, 20, search, status, retailerParam, serviceParam, showTest);
+  const { data, isLoading } = useGlobalTransactions(page, 20, search, status, retailerParam, serviceParam, showTest, accountTypeFilter);
 
   // If URL param changes, reset page
   useEffect(() => {
@@ -74,11 +77,15 @@ function TransactionsContent() {
       header: "Retailer",
       cell: (info: any) => {
         const user = info.getValue();
+        const accType = info.row.original.accountType || user?.accountType;
         if (!user) return <span className="text-muted-foreground">-</span>;
         return (
-          <Link href={`/dashboard/retailers/${user._id}`} className="flex flex-col hover:bg-slate-50 dark:hover:bg-slate-800 p-1 -m-1 rounded transition-colors group">
+          <Link href={`/dashboard/retailers/${user._id}`} className="flex flex-col items-start gap-1 hover:bg-slate-50 dark:hover:bg-slate-800 p-1 -m-1 rounded transition-colors group">
             <span className="font-semibold text-primary group-hover:underline">{user.name}</span>
-            <span className="text-xs text-muted-foreground font-mono">{user.retailerId}</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground font-mono">{user.retailerId}</span>
+              <AccountTypeBadge type={accType} size="sm" />
+            </div>
           </Link>
         );
       },
@@ -208,6 +215,11 @@ function TransactionsContent() {
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </form>
+        <AccountTypeFilter
+          value={accountTypeFilter}
+          onChange={(val) => { setAccountTypeFilter(val); setPage(1); }}
+          showAll={true}
+        />
         <select
           value={status}
           onChange={(e) => {

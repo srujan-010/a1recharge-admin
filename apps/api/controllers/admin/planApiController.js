@@ -270,6 +270,85 @@ const updateSettings = async (req, res, next) => {
   }
 };
 
+// @desc    Test PlanAPI Low Balance WhatsApp Alert
+// @route   POST /api/admin/planapi/test-low-balance-alert
+// @access  Private (Super Admin / Admin)
+const triggerTestLowBalanceAlert = async (req, res, next) => {
+  try {
+    const { balance } = req.body;
+    const testBalance = balance !== undefined ? parseFloat(balance) : 24.50;
+    const planApiWalletMonitorService = require('../../services/planApiWalletMonitor.service');
+    const result = await planApiWalletMonitorService.sendTestAlert(testBalance);
+
+    res.status(200).json({
+      success: true,
+      message: 'Test WhatsApp low-balance alert dispatched',
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Test PlanAPI Low Fetch Limit WhatsApp Alert
+// @route   POST /api/admin/planapi/test-fetch-limit-alert
+// @access  Private (Super Admin / Admin)
+const triggerTestFetchLimitAlert = async (req, res, next) => {
+  try {
+    const { remainingFetches } = req.body;
+    const testFetches = remainingFetches !== undefined ? parseInt(remainingFetches, 10) : 487;
+    const planApiFetchMonitorService = require('../../services/planApiFetchMonitor.service');
+    const result = await planApiFetchMonitorService.sendTestFetchAlert(testFetches);
+
+    res.status(200).json({
+      success: true,
+      message: 'Test WhatsApp fetch-limit alert dispatched',
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get PlanAPI Integration Status Diagnostic
+// @route   GET /api/admin/integrations/planapi/status
+// @access  Private (Admin / Super Admin / Support)
+const getIntegrationsStatus = async (req, res, next) => {
+  try {
+    const PlanCache = require('../../models/PlanCache');
+    const lastPlanCache = await PlanCache.findOne({ provider: 'PlansInfo' }).sort({ lastSynced: -1 });
+
+    const lastSuccessLog = await PlanApiSyncLog.findOne({ status: 'SUCCESS' }).sort({ syncedAt: -1 });
+    const lastFailureLog = await PlanApiSyncLog.findOne({ status: { $ne: 'SUCCESS' } }).sort({ syncedAt: -1 });
+
+    const isWalletHealthy = Boolean(lastSuccessLog && (!lastFailureLog || lastSuccessLog.syncedAt > lastFailureLog.syncedAt));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        planApi: {
+          planFetch: {
+            status: 'healthy',
+            lastSuccessAt: lastPlanCache ? lastPlanCache.lastSynced : new Date(),
+          },
+          wallet: {
+            status: isWalletHealthy ? 'healthy' : (lastFailureLog ? 'failed' : 'unknown'),
+            lastSuccessAt: lastSuccessLog ? lastSuccessLog.syncedAt : null,
+            lastError: lastFailureLog ? lastFailureLog.errorMessage : null,
+          },
+          remainingHits: {
+            status: isWalletHealthy ? 'healthy' : (lastFailureLog ? 'failed' : 'unknown'),
+            lastSuccessAt: lastSuccessLog ? lastSuccessLog.syncedAt : null,
+            lastError: lastFailureLog ? lastFailureLog.errorMessage : null,
+          }
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getDashboardData,
   triggerRefresh,
@@ -277,4 +356,7 @@ module.exports = {
   exportSyncLogs,
   getSettings,
   updateSettings,
+  triggerTestLowBalanceAlert,
+  triggerTestFetchLimitAlert,
+  getIntegrationsStatus,
 };

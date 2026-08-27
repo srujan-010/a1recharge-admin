@@ -12,9 +12,14 @@ const getGlobalTransactions = async (req, res, next) => {
     const status = req.query.status || '';
     const retailerId = req.query.retailer || '';
     const service = req.query.service || '';
+    const accountType = req.query.accountType || '';
     const showTest = req.query.showTest === 'true';
 
     const query = {};
+
+    if (accountType && accountType !== 'all') {
+      query.accountType = accountType.toUpperCase();
+    }
 
     if (!showTest) {
       query.isTest = { $ne: true };
@@ -63,7 +68,7 @@ const getGlobalTransactions = async (req, res, next) => {
     
     // Fetch transactions and populate user details
     const transactions = await Transaction.find(query)
-      .populate('userId', 'name retailerId phone')
+      .populate('userId', 'name retailerId phone accountType')
       .sort({ createdAt: -1 })
       .skip(startIndex)
       .limit(limit)

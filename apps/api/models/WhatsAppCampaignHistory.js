@@ -41,7 +41,7 @@ const whatsAppCampaignHistorySchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['DELIVERED', 'FAILED', 'PENDING'],
+      enum: ['DELIVERED', 'FAILED', 'PENDING', 'SENT', 'ACCEPTED', 'READ', 'QUEUED'],
       default: 'PENDING',
     },
     requestId: {
@@ -59,8 +59,8 @@ const whatsAppCampaignHistorySchema = new mongoose.Schema(
     },
     source: {
       type: String,
-      enum: ['MANUAL', 'AUTOMATIC'],
-      default: 'MANUAL',
+      enum: ['PORTAL', 'API', 'CAMPAIGN', 'AUTOMATION', 'WEBHOOK', 'MANUAL', 'AUTOMATIC'],
+      default: 'PORTAL',
     },
     sentCount: {
       type: Number,
