@@ -39,16 +39,22 @@ const app = express();
 const allowedOrigins = [
   'https://a1recharge.com',
   'https://staging.a1recharge.com',
+  'https://a1recharge-admin.vercel.app',
+  'https://a1recharge-admin.onrender.com',
 ];
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow any origin in dev or if explicitly allowed
+    // Allow server-to-server or requests with no origin
+    if (!origin) return callback(null, true);
     if (process.env.NODE_ENV !== 'production') return callback(null, true);
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
     
-    // Allow flutter web local development even when backend is in production
-    if (/^http:\/\/localhost:\d+$/.test(origin)) return callback(null, true);
+    // Allow Vercel preview/production deployments and Render backend domains
+    if (/\.vercel\.app$/.test(origin) || /\.onrender\.com$/.test(origin)) return callback(null, true);
+    
+    // Allow local development origins
+    if (/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) return callback(null, true);
     
     return callback(new Error('Not allowed by CORS'));
   },
