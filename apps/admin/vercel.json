@@ -1,0 +1,9 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "env": {
+    "NEXT_PUBLIC_API_URL": "https://a1recharge-admin.onrender.com/api",
+    "VITE_API_URL": "https://a1recharge-admin.onrender.com"
+  }
+}
