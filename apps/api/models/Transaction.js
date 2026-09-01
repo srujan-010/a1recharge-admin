@@ -59,8 +59,11 @@ const transactionSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['WALLET', 'UPI', 'BANK_TRANSFER', 'CASH', 'CARD', 'OTHER', 'UNKNOWN', 'wallet', 'upi', 'bank_transfer', 'cash', 'card', 'other', 'unknown'],
     default: 'WALLET',
+  },
+  paymentStatus: {
+    type: String,
+    default: null,
   },
   upiDetails: {
     utr: { type: String, default: null },

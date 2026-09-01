@@ -26,6 +26,7 @@ import { EditRetailerModal } from "@/components/retailers/EditRetailerModal";
 import { SendPushModal } from "@/components/retailers/SendPushModal";
 import { SendSmsModal } from "@/components/retailers/SendSmsModal";
 import { TransactionDetailModal } from "@/components/retailers/TransactionDetailModal";
+import { getPaymentMethod } from "@/lib/paymentUtils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AccountTypeBadge } from "@/components/ui/account-type-badge";
@@ -562,7 +563,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                           <div className="flex items-center gap-1.5 mt-0.5">
                             <span className="text-[10px] text-slate-500 uppercase">{txn.serviceType || txn.service || 'mobile'}</span>
                             <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300">
-                              {(txn.paymentMethod || txn.paymentType || 'UNKNOWN').toUpperCase()}
+                              {getPaymentMethod(txn)}
                             </span>
                           </div>
                         </td>

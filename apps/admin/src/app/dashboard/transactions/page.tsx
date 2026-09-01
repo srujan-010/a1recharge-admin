@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useGlobalTransactions } from "@/hooks/useTransactions";
+import { getPaymentMethod } from "@/lib/paymentUtils";
 import {
   flexRender,
   getCoreRowModel,
@@ -153,7 +154,7 @@ function TransactionsContent() {
       accessorKey: "paymentMethod",
       header: "Payment Method",
       cell: (info: any) => {
-        const method = (info.getValue() || 'wallet').toLowerCase();
+        const method = getPaymentMethod(info.row.original).toLowerCase();
         let label = "Wallet";
         let badgeStyle = "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200 dark:border-blue-800";
         let Icon = Wallet;
@@ -162,7 +163,7 @@ function TransactionsContent() {
           label = "UPI";
           badgeStyle = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800";
           Icon = QrCode;
-        } else if (method === 'gateway') {
+        } else if (method === 'other' || method === 'gateway') {
           label = "Gateway";
           badgeStyle = "bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400 border-purple-200 dark:border-purple-800";
           Icon = CreditCard;
@@ -170,6 +171,10 @@ function TransactionsContent() {
           label = "Bank Transfer";
           badgeStyle = "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200 dark:border-amber-800";
           Icon = Building2;
+        } else if (method === 'unknown') {
+          label = "Unknown";
+          badgeStyle = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border-slate-200 dark:border-slate-700";
+          Icon = Wallet;
         }
 
         return (

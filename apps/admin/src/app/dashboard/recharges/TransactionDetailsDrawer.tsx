@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { X, Loader2, Clock, Smartphone, Wallet, Server, ShieldAlert, History, Activity, FileJson, Lock, Unlock, FileText } from 'lucide-react';
 import { useRechargeDetails } from '@/hooks/useTransactions';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { getPaymentMethod, getPaymentStatus } from '@/lib/paymentUtils';
 import { AccountTypeBadge } from '@/components/ui/account-type-badge';
 
 export function TransactionDetailsDrawer({ orderId, onClose }: { orderId: string | null, onClose: () => void }) {
@@ -73,10 +75,10 @@ export function TransactionDetailsDrawer({ orderId, onClose }: { orderId: string
                     <p className="font-bold text-slate-900 dark:text-white">{data.recharge.operatorCode} / {data.recharge.circleCode}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground mb-1">Payment Type</p>
+                    <p className="text-xs text-muted-foreground mb-1">Payment Method</p>
                     <div className="font-bold text-slate-900 dark:text-white capitalize flex items-center gap-1.5">
                       {(() => {
-                        const pm = (data.recharge.paymentMethod || data.walletTransaction?.paymentMethod || 'UNKNOWN').toUpperCase();
+                        const pm = getPaymentMethod(data.recharge);
                         let badgeColor = "border-slate-300 text-slate-600 bg-slate-100 dark:bg-slate-800 dark:text-slate-300";
                         if (pm === 'WALLET') badgeColor = "border-blue-300 text-blue-700 bg-blue-50 dark:bg-blue-950/60 dark:text-blue-400";
                         if (pm === 'UPI') badgeColor = "border-emerald-300 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/60 dark:text-emerald-400";
@@ -88,6 +90,12 @@ export function TransactionDetailsDrawer({ orderId, onClose }: { orderId: string
                         );
                       })()}
                     </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Payment Status</p>
+                    <p className="font-mono font-bold text-slate-900 dark:text-white text-xs">
+                      {getPaymentStatus(data.recharge)}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground mb-1">Hold Status</p>
@@ -111,16 +119,20 @@ export function TransactionDetailsDrawer({ orderId, onClose }: { orderId: string
                 <div className="mt-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs space-y-2">
                   <div className="flex items-center justify-between font-bold text-slate-700 dark:text-slate-300">
                     <span>Payment Audit Details</span>
-                    <span className="font-mono text-[10px] text-muted-foreground">Source: Real DB</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">Backend Source of Truth</span>
                   </div>
                   {(() => {
-                    const pm = (data.recharge.paymentMethod || data.walletTransaction?.paymentMethod || 'UNKNOWN').toUpperCase();
+                    const pm = getPaymentMethod(data.recharge);
+                    const rawStatus = getPaymentStatus(data.recharge);
+
                     if (pm === 'UPI') {
-                      const utr = data.walletTransaction?.upiDetails?.utr || 'Not Available';
+                      const utr = data.walletTransaction?.upiDetails?.utr || data.recharge?.upiDetails?.utr || 'Not Available';
                       const gateway = data.walletTransaction?.upiDetails?.gateway || 'UPI Gateway';
-                      const pgOrderId = data.walletTransaction?.upiDetails?.gatewayOrderId || 'Not Available';
+                      const pgOrderId = data.walletTransaction?.upiDetails?.gatewayOrderId || data.recharge?.razorpayOrderId || 'Not Available';
                       return (
                         <div className="grid grid-cols-2 gap-2 text-slate-600 dark:text-slate-400 font-mono">
+                          <div>Payment Method: <span className="font-bold text-emerald-600 dark:text-emerald-400">UPI</span></div>
+                          <div>Payment Status: <span className="font-bold text-slate-900 dark:text-white">{rawStatus}</span></div>
                           <div>UTR / UPI ID: <span className="font-bold text-slate-900 dark:text-white">{utr}</span></div>
                           <div>Gateway: <span className="font-bold text-slate-900 dark:text-white">{gateway}</span></div>
                           <div className="col-span-2">PG Order Ref: <span className="font-bold text-slate-900 dark:text-white">{pgOrderId}</span></div>
@@ -132,15 +144,17 @@ export function TransactionDetailsDrawer({ orderId, onClose }: { orderId: string
                         : 'Recorded in Ledger';
                       return (
                         <div className="grid grid-cols-2 gap-2 text-slate-600 dark:text-slate-400 font-mono">
-                          <div>Funded via: <span className="font-bold text-blue-600 dark:text-blue-400">Retailer Real Wallet</span></div>
-                          <div>Closing Balance: <span className="font-bold text-slate-900 dark:text-white">{closingBal}</span></div>
+                          <div>Payment Method: <span className="font-bold text-blue-600 dark:text-blue-400">WALLET</span></div>
+                          <div>Payment Status: <span className="font-bold text-slate-900 dark:text-white">{rawStatus}</span></div>
+                          <div className="col-span-2">Closing Balance: <span className="font-bold text-slate-900 dark:text-white">{closingBal}</span></div>
                         </div>
                       );
                     } else {
                       return (
-                        <p className="text-slate-500 italic">
-                          Payment Type: <span className="font-bold uppercase text-slate-700 dark:text-slate-300">{pm}</span> (Payment source not explicitly recorded in historical transaction record).
-                        </p>
+                        <div className="space-y-1 text-slate-600 dark:text-slate-400 font-mono">
+                          <div>Payment Method: <span className="font-bold text-slate-900 dark:text-white">{pm}</span></div>
+                          <div>Payment Status: <span className="font-bold text-slate-900 dark:text-white">{rawStatus}</span></div>
+                        </div>
                       );
                     }
                   })()}

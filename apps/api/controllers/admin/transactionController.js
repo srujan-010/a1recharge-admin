@@ -1,5 +1,6 @@
 const Transaction = require('../../models/Transaction');
 const User = require('../../models/User');
+const { normalizePaymentType } = require('../../utils/paymentHelper');
 
 // @desc    Get global transactions (Paginated & Searchable)
 // @route   GET /api/admin/transactions
@@ -23,7 +24,24 @@ const getGlobalTransactions = async (req, res, next) => {
     }
 
     if (paymentMethod && paymentMethod !== 'all') {
-      query.paymentMethod = { $regex: new RegExp(`^${paymentMethod}$`, 'i') };
+      const normFilter = normalizePaymentType(paymentMethod);
+      if (normFilter === 'UPI') {
+        query.$or = [
+          { paymentMethod: { $in: ['UPI', 'RAZORPAY_UPI', 'RAZORPAY', 'upi', 'razorpay_upi', 'bhim_upi', 'upi_qr'] } },
+          { paymentStatus: { $in: ['UPI', 'RAZORPAY_UPI', 'RAZORPAY', 'upi', 'razorpay_upi', 'bhim_upi', 'upi_qr'] } },
+          { 'upiDetails.gatewayPaymentId': { $ne: null } }
+        ];
+      } else if (normFilter === 'WALLET') {
+        query.$or = [
+          { paymentMethod: { $in: ['WALLET', 'WALLETS', 'WALLET_DEBIT', 'WALLET_CREDIT', 'wallet'] } },
+          { paymentStatus: { $in: ['WALLET', 'WALLETS', 'WALLET_DEBIT', 'WALLET_CREDIT', 'wallet'] } }
+        ];
+      } else {
+        query.$or = [
+          { paymentMethod: { $regex: new RegExp(`^${normFilter}$`, 'i') } },
+          { paymentStatus: { $regex: new RegExp(`^${normFilter}$`, 'i') } }
+        ];
+      }
     }
 
     if (!showTest) {
@@ -60,7 +78,7 @@ const getGlobalTransactions = async (req, res, next) => {
 
     // 3. Search by Reference ID, Customer Mobile Number, or API Reference
     if (search) {
-      query.$or = [
+      const searchOr = [
         { referenceId: { $regex: search, $options: 'i' } },
         { mobileNumber: { $regex: search, $options: 'i' } },
         { apiReference: { $regex: search, $options: 'i' } },
@@ -69,6 +87,12 @@ const getGlobalTransactions = async (req, res, next) => {
         { 'upiDetails.gatewayOrderId': { $regex: search, $options: 'i' } },
         { 'upiDetails.gatewayPaymentId': { $regex: search, $options: 'i' } }
       ];
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: searchOr }];
+        delete query.$or;
+      } else {
+        query.$or = searchOr;
+      }
     }
 
     const startIndex = (page - 1) * limit;
@@ -82,9 +106,19 @@ const getGlobalTransactions = async (req, res, next) => {
       .limit(limit)
       .lean();
 
+    const formattedTransactions = transactions.map(doc => {
+      const canonicalMethod = normalizePaymentType(doc);
+      const rawStatus = doc.paymentStatus || doc.paymentMethod || 'UNKNOWN';
+      return {
+        ...doc,
+        paymentStatus: rawStatus,
+        paymentMethod: canonicalMethod,
+      };
+    });
+
     res.status(200).json({
       success: true,
-      data: transactions,
+      data: formattedTransactions,
       pagination: {
         page,
         limit,

@@ -10,6 +10,7 @@ const User = require('../../models/User');
 const ProviderFactory = require('../../services/providers/provider.factory');
 const walletService = require('../../services/wallet/wallet.service');
 const commissionService = require('../../services/commission/commission.service');
+const { normalizePaymentType, getRawPaymentStatus } = require('../../utils/paymentHelper');
 
 const sanitizeAccountType = (type) => {
   if (!type) return 'PERSONAL';
@@ -41,7 +42,24 @@ const getRecharges = async (req, res, next) => {
     }
 
     if (paymentMethod && paymentMethod !== 'all') {
-      query.paymentMethod = paymentMethod.toLowerCase();
+      const normFilter = normalizePaymentType(paymentMethod);
+      if (normFilter === 'UPI') {
+        query.$or = [
+          { paymentMethod: { $in: ['UPI', 'RAZORPAY_UPI', 'RAZORPAY', 'upi', 'razorpay_upi', 'bhim_upi', 'upi_qr'] } },
+          { paymentStatus: { $in: ['UPI', 'RAZORPAY_UPI', 'RAZORPAY', 'upi', 'razorpay_upi', 'bhim_upi', 'upi_qr'] } },
+          { razorpayPaymentId: { $ne: null } }
+        ];
+      } else if (normFilter === 'WALLET') {
+        query.$or = [
+          { paymentMethod: { $in: ['WALLET', 'WALLETS', 'WALLET_DEBIT', 'WALLET_CREDIT', 'wallet'] } },
+          { paymentStatus: { $in: ['WALLET', 'WALLETS', 'WALLET_DEBIT', 'WALLET_CREDIT', 'wallet'] } }
+        ];
+      } else {
+        query.$or = [
+          { paymentMethod: { $regex: new RegExp(`^${normFilter}$`, 'i') } },
+          { paymentStatus: { $regex: new RegExp(`^${normFilter}$`, 'i') } }
+        ];
+      }
     }
 
     if (status && status !== 'all') {
@@ -60,11 +78,17 @@ const getRecharges = async (req, res, next) => {
     }
 
     if (search) {
-      query.$or = [
+      const searchOr = [
         { orderId: { $regex: search, $options: 'i' } },
         { providerTransactionId: { $regex: search, $options: 'i' } },
         { mobileNumber: { $regex: search, $options: 'i' } }
       ];
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: searchOr }];
+        delete query.$or;
+      } else {
+        query.$or = searchOr;
+      }
     }
 
     const startIndex = (page - 1) * limit;
@@ -77,9 +101,19 @@ const getRecharges = async (req, res, next) => {
       .limit(limit)
       .lean();
 
+    const formattedRecharges = recharges.map(doc => {
+      const canonicalMethod = normalizePaymentType(doc);
+      const rawStatus = doc.paymentStatus || doc.paymentMethod || 'UNKNOWN';
+      return {
+        ...doc,
+        paymentStatus: rawStatus,
+        paymentMethod: canonicalMethod,
+      };
+    });
+
     res.status(200).json({
       success: true,
-      data: recharges,
+      data: formattedRecharges,
       pagination: {
         page,
         limit,
@@ -129,11 +163,26 @@ const getRechargeDetails = async (req, res, next) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    const rechargeFormatted = {
+      ...recharge,
+      paymentStatus: recharge.paymentStatus || recharge.paymentMethod || 'UNKNOWN',
+      paymentMethod: normalizePaymentType(recharge),
+    };
+
+    let walletTxnFormatted = null;
+    if (walletTransaction) {
+      walletTxnFormatted = {
+        ...walletTransaction,
+        paymentStatus: walletTransaction.paymentStatus || walletTransaction.paymentMethod || 'UNKNOWN',
+        paymentMethod: normalizePaymentType(walletTransaction),
+      };
+    }
+
     res.status(200).json({
       success: true,
       data: {
-        recharge,
-        walletTransaction,
+        recharge: rechargeFormatted,
+        walletTransaction: walletTxnFormatted,
         commissionHistory,
         wallet: wallet ? {
           balance: (wallet.balancePaise || 0) / 100,
