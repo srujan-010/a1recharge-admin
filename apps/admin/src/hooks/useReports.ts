@@ -136,3 +136,59 @@ export function useLedgerReport(startDate?: string, endDate?: string, period?: s
     },
   });
 }
+
+export interface WalletOverviewData {
+  totalCreditsRupees: number;
+  totalDebitsRupees: number;
+  netMovementRupees: number;
+  totalRefundsRupees: number;
+  totalHoldReleasesRupees: number;
+  totalCount: number;
+}
+
+export interface UpiOverviewData {
+  totalCollectionsRupees: number;
+  successAmountRupees: number;
+  successCount: number;
+  pendingAmountRupees: number;
+  pendingCount: number;
+  failedAmountRupees: number;
+  failedCount: number;
+  refundedAmountRupees: number;
+  refundedCount: number;
+}
+
+export interface PaymentTypeBreakdownRow {
+  paymentType: string;
+  count: number;
+  volumeRupees: number;
+}
+
+export interface PaymentOverviewData {
+  period: string;
+  startDate: string;
+  endDate: string;
+  walletOverview: WalletOverviewData;
+  upiOverview: UpiOverviewData;
+  paymentTypeBreakdown: PaymentTypeBreakdownRow[];
+}
+
+export function usePaymentOverview(params: {
+  startDate?: string;
+  endDate?: string;
+  period?: string;
+  accountType?: string;
+  status?: string;
+}) {
+  const { startDate, endDate, period = 'today', accountType = 'all', status = 'all' } = params;
+
+  return useQuery({
+    queryKey: ['payment-overview-report', startDate, endDate, period, accountType, status],
+    queryFn: async () => {
+      const { data } = await api.get<{ success: boolean; data: PaymentOverviewData }>('/admin/reports/payment-overview', {
+        params: { startDate, endDate, period, accountType, status }
+      });
+      return data.data;
+    },
+  });
+}

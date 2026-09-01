@@ -7,7 +7,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { Search, Loader2, ReceiptText, Smartphone, MonitorPlay, Zap, Wallet, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Loader2, ReceiptText, Smartphone, MonitorPlay, Zap, Wallet, QrCode, CreditCard, Building2, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
@@ -30,10 +30,11 @@ function TransactionsContent() {
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState("all");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("all");
   const [showTest, setShowTest] = useState(false);
   const [accountTypeFilter, setAccountTypeFilter] = useState<AccountTypeFilterValue>("all");
 
-  const { data, isLoading } = useGlobalTransactions(page, 20, search, status, retailerParam, serviceParam, showTest, accountTypeFilter);
+  const { data, isLoading } = useGlobalTransactions(page, 20, search, status, retailerParam, serviceParam, showTest, accountTypeFilter, paymentMethodFilter);
 
   // If URL param changes, reset page
   useEffect(() => {
@@ -149,6 +150,37 @@ function TransactionsContent() {
       },
     },
     {
+      accessorKey: "paymentMethod",
+      header: "Payment Method",
+      cell: (info: any) => {
+        const method = (info.getValue() || 'wallet').toLowerCase();
+        let label = "Wallet";
+        let badgeStyle = "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200 dark:border-blue-800";
+        let Icon = Wallet;
+
+        if (method === 'upi') {
+          label = "UPI";
+          badgeStyle = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800";
+          Icon = QrCode;
+        } else if (method === 'gateway') {
+          label = "Gateway";
+          badgeStyle = "bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400 border-purple-200 dark:border-purple-800";
+          Icon = CreditCard;
+        } else if (method === 'bank_transfer') {
+          label = "Bank Transfer";
+          badgeStyle = "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200 dark:border-amber-800";
+          Icon = Building2;
+        }
+
+        return (
+          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold border ${badgeStyle}`}>
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+          </span>
+        );
+      },
+    },
+    {
       accessorKey: "status",
       header: "Status",
       cell: (info: any) => {
@@ -220,6 +252,20 @@ function TransactionsContent() {
           onChange={(val) => { setAccountTypeFilter(val); setPage(1); }}
           showAll={true}
         />
+        <select
+          value={paymentMethodFilter}
+          onChange={(e) => {
+            setPaymentMethodFilter(e.target.value);
+            setPage(1);
+          }}
+          className="h-10 px-3 py-2 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-sm focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px]"
+        >
+          <option value="all">All Payment Types</option>
+          <option value="wallet">Wallet</option>
+          <option value="upi">UPI</option>
+          <option value="gateway">Gateway</option>
+          <option value="bank_transfer">Bank Transfer</option>
+        </select>
         <select
           value={status}
           onChange={(e) => {

@@ -126,10 +126,36 @@ const generateLedgerReport = async (req, res, next) => {
   }
 };
 
+// @desc    Generate Payment Type Overview Report (Wallet vs UPI)
+// @route   GET /api/admin/reports/payment-overview
+// @access  Private (Admin / Finance)
+const getPaymentOverviewReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate, period, accountType, status, showTest } = req.query;
+
+    const data = await FinancialSummaryService.getPaymentTypeOverview({
+      startDate,
+      endDate,
+      period,
+      accountType,
+      status,
+      showTest: showTest === 'true',
+    });
+
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getExecutiveDashboardReport,
   getDailyReport,
   getOperatorReport,
   getCommissionReport,
   generateLedgerReport,
+  getPaymentOverviewReport,
 };

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { 
   useExecutiveDashboardReport, 
   useLedgerReport,
+  usePaymentOverview,
   OperatorPerformanceRow,
   DailyPerformanceRow 
 } from "@/hooks/useReports";
@@ -11,7 +12,7 @@ import {
   FileSpreadsheet, Download, Calendar, Loader2, Activity, 
   TrendingUp, Wallet, ShieldCheck, RefreshCw, ArrowUpRight, 
   ArrowDownRight, Layers, BarChart3, PieChart, Users, Building2,
-  CheckCircle2, XCircle, Clock, Zap, Award
+  CheckCircle2, XCircle, Clock, Zap, Award, CreditCard, QrCode
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -141,15 +142,27 @@ export default function ReportsPage() {
     downloadCSV("operator_performance_report", headers, rows);
   };
 
-  // 4. Export Commission Report
-  const exportCommissionReport = () => {
-    if (!personalVsBusiness) return;
-    const headers = ["Account Type", "Recharge Volume (INR)", "Provider Comm (INR)", "Retailer Comm (INR)", "Company Profit (INR)", "Successful Tx", "Success Rate (%)"];
+  const { data: paymentOverview } = usePaymentOverview({
+    startDate: startDate || undefined,
+    endDate: endDate || undefined,
+    period,
+    accountType: accountTypeFilter
+  });
+
+  // 5. Export Payment Type Overview Report
+  const exportPaymentReport = () => {
+    if (!paymentOverview) return;
+    const headers = ["Metric / Payment Type", "Transaction Count", "Volume (INR)"];
     const rows = [
-      ["PERSONAL", personalVsBusiness.PERSONAL.rechargeVolume, personalVsBusiness.PERSONAL.providerCommission, personalVsBusiness.PERSONAL.retailerCommission, personalVsBusiness.PERSONAL.companyProfit, personalVsBusiness.PERSONAL.successCount, `${personalVsBusiness.PERSONAL.successRate}%`],
-      ["BUSINESS", personalVsBusiness.BUSINESS.rechargeVolume, personalVsBusiness.BUSINESS.providerCommission, personalVsBusiness.BUSINESS.retailerCommission, personalVsBusiness.BUSINESS.companyProfit, personalVsBusiness.BUSINESS.successCount, `${personalVsBusiness.BUSINESS.successRate}%`]
+      ["UPI Total Collections", paymentOverview.upiOverview.successCount, paymentOverview.upiOverview.totalCollectionsRupees],
+      ["UPI Pending", paymentOverview.upiOverview.pendingCount, paymentOverview.upiOverview.pendingAmountRupees],
+      ["UPI Failed", paymentOverview.upiOverview.failedCount, paymentOverview.upiOverview.failedAmountRupees],
+      ["Wallet Total Credits", paymentOverview.walletOverview.totalCount, paymentOverview.walletOverview.totalCreditsRupees],
+      ["Wallet Total Debits", paymentOverview.walletOverview.totalCount, paymentOverview.walletOverview.totalDebitsRupees],
+      ["Wallet Net Movement", "-", paymentOverview.walletOverview.netMovementRupees],
+      ...paymentOverview.paymentTypeBreakdown.map(b => [b.paymentType, b.count, b.volumeRupees])
     ];
-    downloadCSV("account_type_commission_report", headers, rows);
+    downloadCSV("payment_type_overview_report", headers, rows);
   };
 
   return (
@@ -778,15 +791,15 @@ export default function ReportsPage() {
               </div>
 
               <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400 flex items-center justify-center">
-                  <Building2 className="w-5 h-5" />
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400 flex items-center justify-center">
+                  <CreditCard className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-extrabold text-sm text-slate-900 dark:text-white">Commission & Payout Report</h4>
-                  <p className="text-[11px] text-slate-500 font-medium mt-1">Personal vs Business commission metrics.</p>
+                  <h4 className="font-extrabold text-sm text-slate-900 dark:text-white">Payment Method & Source Report</h4>
+                  <p className="text-[11px] text-slate-500 font-medium mt-1">Wallet vs UPI collections & payment source breakdown.</p>
                 </div>
-                <Button onClick={exportCommissionReport} disabled={!personalVsBusiness} className="w-full h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl">
-                  <Download className="w-3.5 h-3.5 mr-1.5" /> Export Commission CSV
+                <Button onClick={exportPaymentReport} disabled={!paymentOverview} className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl">
+                  <Download className="w-3.5 h-3.5 mr-1.5" /> Export Payment CSV
                 </Button>
               </div>
 

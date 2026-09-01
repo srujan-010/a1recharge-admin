@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 
 export default function GlobalCommissionsPage() {
-  const [selectedAccountType, setSelectedAccountType] = useState<AccountTypeFilterValue>("PERSONAL");
+  const [selectedAccountType, setSelectedAccountType] = useState<AccountTypeFilterValue>("BUSINESS");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
 
@@ -95,8 +95,9 @@ export default function GlobalCommissionsPage() {
   };
 
   const handleSave = (op: GlobalCommission) => {
-    const key = `${op.accountType}_${op.operatorCode}`;
-    const edits = editingComm[key] || editingComm[op.operatorCode];
+    const keyWithName = `${op.accountType}_${op.operatorCode}_${op.operatorName.replace(/\s+/g, "_")}`;
+    const keyWithCode = `${op.accountType}_${op.operatorCode}`;
+    const edits = editingComm[keyWithName] || editingComm[keyWithCode] || editingComm[op.operatorCode];
     if (!edits) return;
 
     const providerCommission = edits.provider !== undefined ? parseFloat(edits.provider) : op.providerCommission;
@@ -115,7 +116,8 @@ export default function GlobalCommissionsPage() {
       {
         onSuccess: () => {
           const newEditing = { ...editingComm };
-          delete newEditing[key];
+          delete newEditing[keyWithName];
+          delete newEditing[keyWithCode];
           delete newEditing[op.operatorCode];
           setEditingComm(newEditing);
           refetch();
@@ -363,10 +365,17 @@ export default function GlobalCommissionsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {ops?.map((op) => {
-                        const editKey = `${op.accountType}_${op.operatorCode}`;
-                        const isEditing = editingComm[editKey] !== undefined || editingComm[op.operatorCode] !== undefined;
-                        const activeEdits = editingComm[editKey] || editingComm[op.operatorCode] || {};
+                      {ops?.map((op, idx) => {
+                        const editKey = `${op.accountType}_${op.operatorCode}_${op.operatorName.replace(/\s+/g, "_")}`;
+                        const isEditing =
+                          editingComm[editKey] !== undefined ||
+                          editingComm[`${op.accountType}_${op.operatorCode}`] !== undefined ||
+                          editingComm[op.operatorCode] !== undefined;
+                        const activeEdits =
+                          editingComm[editKey] ||
+                          editingComm[`${op.accountType}_${op.operatorCode}`] ||
+                          editingComm[op.operatorCode] ||
+                          {};
 
                         const editedProvider =
                           activeEdits.provider !== undefined
@@ -380,7 +389,7 @@ export default function GlobalCommissionsPage() {
 
                         return (
                           <TableRow
-                            key={`${op.accountType}_${op.operatorCode}_${op._id || 'new'}`}
+                            key={`${op.accountType}_${op.operatorCode}_${op.operatorName.replace(/\s+/g, "_")}_${op._id || idx}`}
                             className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30"
                           >
                             <TableCell>

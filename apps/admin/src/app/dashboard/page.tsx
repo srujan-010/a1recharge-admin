@@ -4,10 +4,11 @@ import { useState, useEffect } from 'react';
 import { 
   IndianRupee, Wallet, Users, ArrowUpRight, Activity, Sparkles, 
   CheckCircle2, AlertTriangle, Clock, Percent, DollarSign, 
-  UserCheck, ShieldCheck, MessageSquare, Bell, CreditCard, RefreshCw, Smartphone, Tv, Zap, Droplet, Flame, Gamepad2, Globe
+  UserCheck, ShieldCheck, MessageSquare, Bell, CreditCard, RefreshCw, Smartphone, Tv, Zap, Droplet, Flame, Gamepad2, Globe, QrCode, ArrowDownLeft
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useDashboardStats, useLiveFeed } from '@/hooks/useDashboard';
+import { usePaymentOverview } from '@/hooks/useReports';
 import { useSocket } from '@/hooks/useSocket';
 import { LiveProviderCard } from '@/components/dashboard/LiveProviderCard';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +17,7 @@ export default function DashboardPage() {
   const [timeFilter, setTimeFilter] = useState<'today' | '7d' | '30d' | 'month'>('today');
 
   const { data: stats, isLoading: isStatsLoading } = useDashboardStats(timeFilter);
+  const { data: paymentOverview, isLoading: isPaymentLoading } = usePaymentOverview({ period: timeFilter });
   const { data: initialFeed, isLoading: isFeedLoading } = useLiveFeed();
   const { socket, isConnected } = useSocket();
 
@@ -332,6 +334,95 @@ export default function DashboardPage() {
 
         {/* KPI 7: Live Provider Balance Card */}
         <LiveProviderCard providerName="A1Topup" />
+      </div>
+
+      {/* Payment Type Financial Overview (Wallet vs UPI) */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Card A: Wallet Movement Overview */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[20px] p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+                <Wallet className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 dark:text-white text-sm">Wallet Transactions Overview</h3>
+                <p className="text-[11px] text-slate-500 font-medium">Real DB wallet ledger debit/credit movement</p>
+              </div>
+            </div>
+            <Badge variant="outline" className="uppercase font-bold text-[10px] border-blue-200 dark:border-blue-800 text-blue-600">
+              WALLET
+            </Badge>
+          </div>
+
+          {isPaymentLoading ? (
+            <div className="h-16 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-xl" />
+          ) : (
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[11px] text-slate-500 font-medium mb-1">Total Credits</p>
+                <p className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                  +₹{paymentOverview?.walletOverview.totalCreditsRupees.toFixed(2) || '0.00'}
+                </p>
+              </div>
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[11px] text-slate-500 font-medium mb-1">Total Debits</p>
+                <p className="font-mono font-bold text-slate-900 dark:text-white text-sm">
+                  -₹{paymentOverview?.walletOverview.totalDebitsRupees.toFixed(2) || '0.00'}
+                </p>
+              </div>
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[11px] text-slate-500 font-medium mb-1">Net Movement</p>
+                <p className="font-mono font-bold text-blue-600 dark:text-blue-400 text-sm">
+                  ₹{paymentOverview?.walletOverview.netMovementRupees.toFixed(2) || '0.00'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Card B: UPI Collections Overview */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-[20px] p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
+                <QrCode className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 dark:text-white text-sm">UPI Transactions Overview</h3>
+                <p className="text-[11px] text-slate-500 font-medium">Actual UPI wallet top-ups & direct payments</p>
+              </div>
+            </div>
+            <Badge variant="outline" className="uppercase font-bold text-[10px] border-emerald-200 dark:border-emerald-800 text-emerald-600">
+              UPI
+            </Badge>
+          </div>
+
+          {isPaymentLoading ? (
+            <div className="h-16 animate-pulse bg-slate-100 dark:bg-slate-800 rounded-xl" />
+          ) : (
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[11px] text-slate-500 font-medium mb-1">UPI Collections</p>
+                <p className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                  ₹{paymentOverview?.upiOverview.totalCollectionsRupees.toFixed(2) || '0.00'}
+                </p>
+              </div>
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[11px] text-slate-500 font-medium mb-1">Successful Txns</p>
+                <p className="font-mono font-bold text-slate-900 dark:text-white text-sm">
+                  {paymentOverview?.upiOverview.successCount || 0}
+                </p>
+              </div>
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800">
+                <p className="text-[11px] text-slate-500 font-medium mb-1">Pending / Failed</p>
+                <p className="font-mono font-bold text-amber-600 dark:text-amber-400 text-sm">
+                  {(paymentOverview?.upiOverview.pendingCount || 0) + (paymentOverview?.upiOverview.failedCount || 0)}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main Operational Grid: Recharge Analytics & Recent System Activity */}

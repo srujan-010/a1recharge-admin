@@ -11,7 +11,8 @@ const {
   updateRetailerProfile,
   deleteRetailer,
   resetRetailerSecurity,
-  revokeRetailerSessions
+  revokeRetailerSessions,
+  releaseRetailerHold
 } = require('../controllers/admin/retailerController');
 const { getGlobalLedger, manualCreditDebit } = require('../controllers/admin/walletController');
 const { getDashboardStats: getProviderWalletStats, getTransactions: getProviderWalletTransactions, getFast2SMSWallet } = require('../controllers/admin/providerWalletController');
@@ -25,7 +26,8 @@ const {
   getDailyReport,
   getOperatorReport,
   getCommissionReport,
-  generateLedgerReport 
+  generateLedgerReport,
+  getPaymentOverviewReport 
 } = require('../controllers/admin/reportController');
 const { sendGlobalNotification, getRecentBroadcasts, sendDirectSMS } = require('../controllers/admin/notificationController');
 const { getSettings, updateSettings } = require('../controllers/admin/settingsController');
@@ -60,6 +62,7 @@ router.put('/retailers/:id/account-type', protectAdmin, authorize('SUPER_ADMIN',
 router.post('/retailers/:id/unlock', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, unlockRetailerAccount);
 router.post('/retailers/:id/reset-security', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, resetRetailerSecurity);
 router.post('/retailers/:id/revoke-sessions', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, revokeRetailerSessions);
+router.post('/retailers/:id/release-hold', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE'), idempotency, releaseRetailerHold);
 router.post('/notifications/send-sms', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, sendDirectSMS);
 
 // Distributor routes
@@ -115,6 +118,7 @@ router.get('/reports/daily', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', '
 router.get('/reports/operators', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getOperatorReport);
 router.get('/reports/commissions', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getCommissionReport);
 router.get('/reports/ledger', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), generateLedgerReport);
+router.get('/reports/payment-overview', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getPaymentOverviewReport);
 
 // Internal Notification routes
 router.post('/notifications/broadcast', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, sendGlobalNotification);

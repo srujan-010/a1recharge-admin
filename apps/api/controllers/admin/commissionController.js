@@ -2,6 +2,7 @@ const OperatorCommission = require('../../models/OperatorCommission');
 const CommissionHistory = require('../../models/CommissionHistory');
 const ProviderOperator = require('../../models/ProviderOperator');
 const { logAudit } = require('../../utils/auditHelper');
+const { getOperatorCodeAliases } = require('../../utils/operatorAlias');
 
 // @desc    Get all operator commissions with stats & accountType filter
 // @route   GET /api/admin/commissions
@@ -9,8 +10,11 @@ const { logAudit } = require('../../utils/auditHelper');
 const getCommissions = async (req, res, next) => {
   try {
     const accountType = req.query.accountType ? req.query.accountType.toUpperCase() : 'ALL';
+    console.log('[Commission] MongoDB connected');
+    console.log(`[Commission] Loading operator commission configuration for accountType: ${accountType}`);
+
     const providerOperators = await ProviderOperator.find().lean();
-    
+
     // Build query for commissions
     const commQuery = {};
     if (accountType === 'PERSONAL' || accountType === 'BUSINESS') {
@@ -22,74 +26,77 @@ const getCommissions = async (req, res, next) => {
 
     // Summary Statistics
     const stats = {
-      personalSlabs: allCommissions.filter(c => c.accountType === 'PERSONAL').length,
-      businessSlabs: allCommissions.filter(c => c.accountType === 'BUSINESS').length,
-      activeSlabs: allCommissions.filter(c => c.status === 'ACTIVE').length,
-      inactiveSlabs: allCommissions.filter(c => c.status === 'INACTIVE').length,
-      personalActive: allCommissions.filter(c => c.accountType === 'PERSONAL' && c.status === 'ACTIVE').length,
-      businessActive: allCommissions.filter(c => c.accountType === 'BUSINESS' && c.status === 'ACTIVE').length,
+      personalSlabs: allCommissions.filter((c) => c.accountType === 'PERSONAL').length,
+      businessSlabs: allCommissions.filter((c) => c.accountType === 'BUSINESS').length,
+      activeSlabs: allCommissions.filter((c) => c.status === 'ACTIVE').length,
+      inactiveSlabs: allCommissions.filter((c) => c.status === 'INACTIVE').length,
+      personalActive: allCommissions.filter((c) => c.accountType === 'PERSONAL' && c.status === 'ACTIVE').length,
+      businessActive: allCommissions.filter((c) => c.accountType === 'BUSINESS' && c.status === 'ACTIVE').length,
     };
 
     let joinedData = [];
 
     if (accountType === 'PERSONAL' || accountType === 'BUSINESS') {
-      // Map commissions by operatorCode for selected accountType
-      const commissionMap = commissions.reduce((acc, comm) => {
-        acc[comm.operatorCode] = comm;
-        return acc;
-      }, {});
+      // Map commissions with alias fallback so po.code matches commission operatorCode or aliases
+      joinedData = providerOperators.map((po) => {
+        const aliases = getOperatorCodeAliases(po.code);
+        const comm = commissions.find(
+          (c) => aliases.includes((c.operatorCode || '').toUpperCase()) || (c.operatorName && c.operatorName.toLowerCase() === po.name.toLowerCase())
+        );
 
-      joinedData = providerOperators.map(po => {
-        const comm = commissionMap[po.code] || {
-          _id: null,
-          accountType: accountType,
-          providerCommission: 0,
-          retailerCommission: 0,
-          companyCommission: 0,
-          status: 'INACTIVE'
-        };
+        const providerComm = comm ? comm.providerCommission || 0 : 0;
+        const retailerComm = comm ? comm.retailerCommission || 0 : 0;
+        const companyComm = comm ? comm.companyCommission ?? (providerComm - retailerComm) : 0;
+
+        console.log(`[Commission] Operator: ${po.name} (${po.code}) | AccountType: ${accountType} | Provider Commission: ${providerComm}% | Retailer Commission: ${retailerComm}%`);
+
         return {
-          _id: comm._id || null,
-          accountType: comm.accountType || accountType,
-          operatorCode: po.code,
+          _id: comm ? comm._id : null,
+          accountType: comm ? comm.accountType : accountType,
+          operatorCode: comm ? comm.operatorCode : po.code,
           operatorName: po.name,
           serviceType: po.serviceType || po.type || 'mobile',
-          providerCommission: comm.providerCommission || 0,
-          retailerCommission: comm.retailerCommission || 0,
-          companyCommission: comm.companyCommission || 0,
-          status: comm.status || 'INACTIVE',
+          providerCommission: providerComm,
+          retailerCommission: retailerComm,
+          companyCommission: companyComm,
+          status: comm ? comm.status : 'INACTIVE',
           poStatus: po.status,
         };
       });
     } else {
       // ALL selected: return all existing slabs explicitly, plus unconfigured operators for PERSONAL & BUSINESS
-      const configuredMap = {};
-      commissions.forEach(comm => {
-        configuredMap[`${comm.accountType}_${comm.operatorCode}`] = comm;
-      });
-
-      // Include all configured commissions plus missing operators
       const list = [];
-      commissions.forEach(comm => {
-        const po = providerOperators.find(p => p.code === comm.operatorCode);
+      commissions.forEach((comm) => {
+        const aliases = getOperatorCodeAliases(comm.operatorCode);
+        const po = providerOperators.find((p) => aliases.includes(p.code.toUpperCase()) || p.name.toLowerCase() === (comm.operatorName || '').toLowerCase());
+        const providerComm = comm.providerCommission || 0;
+        const retailerComm = comm.retailerCommission || 0;
+        const companyComm = comm.companyCommission ?? (providerComm - retailerComm);
+
+        console.log(`[Commission] Operator: ${comm.operatorName || comm.operatorCode} | AccountType: ${comm.accountType} | Provider Commission: ${providerComm}% | Retailer Commission: ${retailerComm}%`);
+
         list.push({
           _id: comm._id,
           accountType: comm.accountType,
           operatorCode: comm.operatorCode,
           operatorName: comm.operatorName || (po ? po.name : comm.operatorCode),
-          serviceType: po ? (po.serviceType || po.type || 'mobile') : 'mobile',
-          providerCommission: comm.providerCommission,
-          retailerCommission: comm.retailerCommission,
-          companyCommission: comm.companyCommission,
+          serviceType: comm.serviceType || (po ? (po.serviceType || po.type || 'mobile') : 'mobile'),
+          providerCommission: providerComm,
+          retailerCommission: retailerComm,
+          companyCommission: companyComm,
           status: comm.status,
           poStatus: po ? po.status : true,
         });
       });
 
-      // Add unconfigured operators as defaults if no slabs exist at all for them
-      providerOperators.forEach(po => {
-        ['PERSONAL', 'BUSINESS'].forEach(accType => {
-          if (!configuredMap[`${accType}_${po.code}`]) {
+      providerOperators.forEach((po) => {
+        ['PERSONAL', 'BUSINESS'].forEach((accType) => {
+          const aliases = getOperatorCodeAliases(po.code);
+          const exists = commissions.some(
+            (c) => c.accountType === accType && (aliases.includes((c.operatorCode || '').toUpperCase()) || (c.operatorName && c.operatorName.toLowerCase() === po.name.toLowerCase()))
+          );
+
+          if (!exists) {
             list.push({
               _id: null,
               accountType: accType,
@@ -115,6 +122,7 @@ const getCommissions = async (req, res, next) => {
       data: joinedData,
     });
   } catch (error) {
+    console.error('[Commission Error] Failed to load operator commissions:', error);
     next(error);
   }
 };
@@ -124,7 +132,7 @@ const getCommissions = async (req, res, next) => {
 // @access  Private (Super Admin / Finance)
 const createCommission = async (req, res, next) => {
   try {
-    const { accountType, operatorCode, operatorName, providerCommission, retailerCommission, status } = req.body;
+    const { accountType, operatorCode, operatorName, providerCommission, retailerCommission, status, serviceType } = req.body;
 
     if (!accountType || !['PERSONAL', 'BUSINESS'].includes(accountType.toUpperCase())) {
       return res.status(400).json({ success: false, message: 'Invalid account type.' });
@@ -135,9 +143,11 @@ const createCommission = async (req, res, next) => {
     }
 
     const upperAccType = accountType.toUpperCase();
+    const cleanOpCode = operatorCode.trim().toUpperCase();
+    const aliases = getOperatorCodeAliases(cleanOpCode);
 
     // Check duplicate
-    const existing = await OperatorCommission.findOne({ accountType: upperAccType, operatorCode });
+    const existing = await OperatorCommission.findOne({ accountType: upperAccType, operatorCode: { $in: aliases } });
     if (existing) {
       return res.status(400).json({
         success: false,
@@ -159,8 +169,9 @@ const createCommission = async (req, res, next) => {
 
     const commissionRecord = new OperatorCommission({
       accountType: upperAccType,
-      operatorCode,
-      operatorName: operatorName || operatorCode,
+      operatorCode: cleanOpCode,
+      operatorName: operatorName || cleanOpCode,
+      serviceType: serviceType || 'mobile',
       providerCommission: providerCommNum,
       retailerCommission: retailerCommNum,
       companyCommission,
@@ -169,6 +180,8 @@ const createCommission = async (req, res, next) => {
 
     await commissionRecord.save();
 
+    console.log(`[Commission] Created ${upperAccType} slab for ${commissionRecord.operatorName} (${cleanOpCode}) | Provider: ${providerCommNum}% | Retailer: ${retailerCommNum}% | Margin: ${companyCommission}%`);
+
     await logAudit(
       req.admin,
       `CREATE_COMMISSION`,
@@ -176,7 +189,7 @@ const createCommission = async (req, res, next) => {
       null,
       {
         accountType: upperAccType,
-        operatorCode,
+        operatorCode: cleanOpCode,
         providerCommission: providerCommNum,
         retailerCommission: retailerCommNum,
         companyCommission,
@@ -191,6 +204,7 @@ const createCommission = async (req, res, next) => {
       data: commissionRecord,
     });
   } catch (error) {
+    console.error('[Commission Error] Failed to create commission:', error);
     next(error);
   }
 };
@@ -221,25 +235,30 @@ const updateCommission = async (req, res, next) => {
       });
     }
 
-    // Try finding by MongoDB ObjectId first, or by operatorCode + accountType
+    const aliases = getOperatorCodeAliases(code);
+
+    // Try finding by MongoDB ObjectId first, or by operatorCode + accountType (with aliases)
     let commissionRecord = null;
     if (code.match(/^[0-9a-fA-F]{24}$/)) {
       commissionRecord = await OperatorCommission.findById(code);
     }
     if (!commissionRecord) {
-      commissionRecord = await OperatorCommission.findOne({ accountType: targetAccountType, operatorCode: code });
+      commissionRecord = await OperatorCommission.findOne({
+        accountType: targetAccountType,
+        $or: [{ operatorCode: { $in: aliases } }, { operatorName: { $regex: new RegExp(`^${operatorName || code}$`, 'i') } }],
+      });
     }
-    
+
     if (!commissionRecord) {
       // Create new for this accountType and operatorCode
       commissionRecord = new OperatorCommission({
         accountType: targetAccountType,
-        operatorCode: code,
+        operatorCode: code.toUpperCase(),
         operatorName: operatorName || code,
-        providerCommission: 0,
-        retailerCommission: 0,
-        companyCommission: 0,
-        status: 'ACTIVE'
+        providerCommission: providerCommNum,
+        retailerCommission: retailerCommNum,
+        companyCommission: providerCommNum - retailerCommNum,
+        status: status || 'ACTIVE',
       });
     }
 
@@ -250,32 +269,35 @@ const updateCommission = async (req, res, next) => {
       providerCommission: commissionRecord.providerCommission,
       retailerCommission: commissionRecord.retailerCommission,
       companyCommission: commissionRecord.companyCommission,
-      status: commissionRecord.status
+      status: commissionRecord.status,
     };
 
     commissionRecord.providerCommission = providerCommNum;
     commissionRecord.retailerCommission = retailerCommNum;
     commissionRecord.companyCommission = companyCommission;
-    
+    if (operatorName) commissionRecord.operatorName = operatorName;
+
     if (status) {
       commissionRecord.status = status;
     }
 
     await commissionRecord.save();
 
+    console.log(`[Commission] Updated ${commissionRecord.accountType} slab for ${commissionRecord.operatorName} (${commissionRecord.operatorCode}) | Provider: ${providerCommNum}% | Retailer: ${retailerCommNum}% | Margin: ${companyCommission}%`);
+
     // Trigger Audit Log
     await logAudit(
-      req.admin, 
-      `UPDATE_COMMISSION`, 
-      'COMMISSION', 
-      oldValues, 
+      req.admin,
+      `UPDATE_COMMISSION`,
+      'COMMISSION',
+      oldValues,
       {
         accountType: commissionRecord.accountType,
         providerCommission: commissionRecord.providerCommission,
         retailerCommission: commissionRecord.retailerCommission,
         companyCommission: commissionRecord.companyCommission,
-        status: commissionRecord.status
-      }, 
+        status: commissionRecord.status,
+      },
       req
     );
 
@@ -285,6 +307,7 @@ const updateCommission = async (req, res, next) => {
       data: commissionRecord,
     });
   } catch (error) {
+    console.error('[Commission Error] Failed to update commission:', error);
     next(error);
   }
 };
@@ -292,5 +315,6 @@ const updateCommission = async (req, res, next) => {
 module.exports = {
   getCommissions,
   createCommission,
-  updateCommission
+  updateCommission,
 };
+

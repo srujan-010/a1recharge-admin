@@ -13,7 +13,7 @@ const transactionActionLogSchema = new mongoose.Schema({
   },
   action: {
     type: String,
-    enum: ['CHECK_STATUS', 'RETRY', 'REFUND', 'KEEP_PENDING', 'MANUAL_SUCCESS', 'MANUAL_FAILURE', 'ADD_NOTE'],
+    enum: ['CHECK_STATUS', 'RETRY', 'REFUND', 'KEEP_PENDING', 'MANUAL_SUCCESS', 'MANUAL_FAILURE', 'ADD_NOTE', 'RELEASE_HOLD', 'MARK_SUCCESS', 'MARK_FAILED', 'PROVIDER_STATUS'],
     required: true,
   },
   previousStatus: {

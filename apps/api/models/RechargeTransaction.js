@@ -14,7 +14,6 @@ const rechargeTransactionSchema = new mongoose.Schema(
     },
     accountType: {
       type: String,
-      enum: ['PERSONAL', 'BUSINESS'],
       default: 'PERSONAL',
     },
     providerName: {
@@ -48,7 +47,6 @@ const rechargeTransactionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['PENDING', 'SUCCESS', 'FAILED', 'REFUNDED', 'REVERSED', 'CANCELLED', 'TIMEOUT'],
       default: 'PENDING',
     },
     reservedAmount: {
@@ -86,8 +84,13 @@ const rechargeTransactionSchema = new mongoose.Schema(
       createdAt: { type: Date, default: Date.now }
     }],
     refundStatus: {
-      type: Boolean,
-      default: false,
+      type: mongoose.Schema.Types.Mixed,
+      default: 'NONE',
+    },
+    paymentMethod: {
+      type: String,
+      enum: ['WALLET', 'UPI', 'BANK_TRANSFER', 'CASH', 'CARD', 'OTHER', 'UNKNOWN', 'wallet', 'upi', 'bank_transfer', 'cash', 'card', 'other', 'unknown'],
+      default: 'WALLET',
     }
   },
   { timestamps: true }

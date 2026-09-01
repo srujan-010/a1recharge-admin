@@ -8,7 +8,8 @@ import {
   useUpdateRetailerAccountType,
   useResetRetailerSecurity,
   useRevokeRetailerSessions,
-  useDeleteRetailer
+  useDeleteRetailer,
+  useReleaseRetailerHold
 } from "@/hooks/useRetailers";
 import { useUpdateKycStatus } from "@/hooks/useKyc";
 import { 
@@ -16,7 +17,7 @@ import {
   Phone, Mail, CreditCard, ShieldCheck, Clock, Download, Eye, AlertCircle, Plus, 
   Minus, Send, RefreshCw, Key, Lock, Unlock, Loader2, Copy, Check, Search, Activity, Smartphone, 
   Sparkles, X, TrendingUp, IndianRupee, ArrowUpRight, ArrowDownRight, SmartphoneNfc, 
-  MoreVertical, Edit, User, Fingerprint, Calendar, Zap, Layers, Trash2, LogOut, MessageSquare
+  MoreVertical, Edit, User, Fingerprint, Calendar, Zap, Layers, Trash2, LogOut, MessageSquare, ShieldAlert
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -45,6 +46,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
   const resetSecurityMutation = useResetRetailerSecurity();
   const revokeSessionsMutation = useRevokeRetailerSessions();
   const deleteRetailerMutation = useDeleteRetailer();
+  const releaseHoldMutation = useReleaseRetailerHold();
 
   // Modal States
   const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState(false);
@@ -58,6 +60,13 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDropdownMenuOpen, setIsDropdownMenuOpen] = useState(false);
   const [selectedTxn, setSelectedTxn] = useState<any | null>(null);
+
+  // Hold Release Modal States
+  const [isHoldsModalOpen, setIsHoldsModalOpen] = useState(false);
+  const [selectedHoldToRelease, setSelectedHoldToRelease] = useState<any | null>(null);
+  const [isReleaseHoldConfirmOpen, setIsReleaseHoldConfirmOpen] = useState(false);
+  const [isReleaseAllHold, setIsReleaseAllHold] = useState(false);
+  const [releaseHoldRemarks, setReleaseHoldRemarks] = useState("");
 
   const [targetAccountType, setTargetAccountType] = useState<"PERSONAL" | "BUSINESS">("PERSONAL");
   const [adjustmentType, setAdjustmentType] = useState<"credit" | "debit">("credit");
@@ -255,6 +264,11 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                     <Wallet className="w-4 h-4 text-blue-500" /> Adjust Wallet Balance
                   </button>
                 )}
+                {onHoldBalance > 0 && (
+                  <button onClick={() => { setIsDropdownMenuOpen(false); setIsHoldsModalOpen(true); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-xl flex items-center gap-2">
+                    <Unlock className="w-4 h-4" /> Release Wallet Hold (₹{onHoldBalance.toFixed(2)})
+                  </button>
+                )}
                 <button onClick={() => { setIsDropdownMenuOpen(false); setIsResetSecurityModalOpen(true); }} className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl flex items-center gap-2">
                   <Key className="w-4 h-4 text-amber-500" /> Reset Password & MPIN
                 </button>
@@ -313,12 +327,16 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
         </div>
 
         {/* Hold Amount */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-2">
+        <div 
+          onClick={() => setIsHoldsModalOpen(true)}
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-2 cursor-pointer hover:border-amber-500/50 transition-colors"
+        >
           <div className="text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between">
             Hold Amount <Lock className="w-4 h-4 text-amber-500" />
           </div>
-          <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
-            {retailer.accountType === 'PERSONAL' ? '—' : `₹${onHoldBalance.toFixed(2)}`}
+          <div className="text-2xl font-black text-amber-600 dark:text-amber-400 font-mono flex items-center justify-between">
+            <span>{retailer.accountType === 'PERSONAL' ? '—' : `₹${onHoldBalance.toFixed(2)}`}</span>
+            {onHoldBalance > 0 && <span className="text-[10px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full">Active</span>}
           </div>
         </div>
 
@@ -389,9 +407,19 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                     <p className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-1">Available Balance</p>
                     <p className="text-4xl font-black font-mono">₹{walletBalance.toFixed(2)}</p>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right space-y-1">
                     <p className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-1">Hold Balance</p>
                     <p className="text-lg font-bold font-mono text-amber-400">₹{onHoldBalance.toFixed(2)}</p>
+                    {onHoldBalance > 0 && (
+                      <Button
+                        onClick={() => setIsHoldsModalOpen(true)}
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] px-2 border-amber-500/50 text-amber-400 hover:bg-amber-950/50 font-bold"
+                      >
+                        <Unlock className="w-3 h-3 mr-1" /> Release Hold
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -531,7 +559,12 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                         </td>
                         <td className="py-3">
                           <div className="font-semibold text-slate-900 dark:text-white text-xs">{txn.operatorName || txn.internalOperatorName || 'Recharge'}</div>
-                          <div className="text-[10px] text-slate-500 uppercase">{txn.serviceType || txn.service || 'mobile'}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[10px] text-slate-500 uppercase">{txn.serviceType || txn.service || 'mobile'}</span>
+                            <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300">
+                              {(txn.paymentMethod || txn.paymentType || 'UNKNOWN').toUpperCase()}
+                            </span>
+                          </div>
                         </td>
                         <td className="py-3 text-right font-mono font-bold text-slate-900 dark:text-white">
                           ₹{txnAmount.toFixed(2)}
@@ -1117,6 +1150,224 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
               >
                 {isUpdatingAccType ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
                 Confirm & Update Type
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 1. Active Wallet Holds Modal */}
+      {isHoldsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-2xl w-full rounded-[24px] shadow-2xl p-6 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">Active Wallet Holds</h3>
+                  <p className="text-xs text-slate-500 font-medium">{retailer.name} ({retailer.retailerId}) — Current Hold: <span className="font-mono font-bold text-amber-500">₹{onHoldBalance.toFixed(2)}</span></p>
+                </div>
+              </div>
+              <button onClick={() => setIsHoldsModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+              {retailer.activeHolds && retailer.activeHolds.length > 0 ? (
+                retailer.activeHolds.map((hold: any) => {
+                  const isProcessing = ['PROCESSING', 'INITIATED', 'RECHARGE_PROCESSING'].includes(hold.status);
+                  const holdAmount = hold.reservedAmount > 0 ? hold.reservedAmount : hold.amount;
+
+                  return (
+                    <div key={hold._id} className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700/60 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-sm text-slate-900 dark:text-white">{hold.orderId}</span>
+                            <Badge variant={hold.status === 'SUCCESS' ? 'success' : hold.status === 'FAILED' ? 'error' : 'warning'} className="text-[10px] uppercase">
+                              {hold.status}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500 font-medium">
+                            {hold.operatorCode || 'Recharge'} • {hold.mobileNumber} • {new Date(hold.createdAt).toLocaleString('en-IN')}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs font-semibold text-slate-500 block uppercase">Held Amount</span>
+                          <span className="text-lg font-black font-mono text-amber-600 dark:text-amber-400">₹{holdAmount?.toFixed(2)}</span>
+                        </div>
+                      </div>
+
+                      {isProcessing && (
+                        <div className="bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2">
+                          <ShieldAlert className="w-4 h-4 shrink-0 text-amber-600" />
+                          <span><strong>Active Transaction Notice:</strong> This recharge is actively processing with provider. Ensure provider status is verified before manual release.</span>
+                        </div>
+                      )}
+
+                      <div className="flex justify-end pt-1">
+                        <Button
+                          onClick={() => {
+                            setSelectedHoldToRelease(hold);
+                            setIsReleaseAllHold(false);
+                            setReleaseHoldRemarks('');
+                            setIsReleaseHoldConfirmOpen(true);
+                          }}
+                          size="sm"
+                          className="bg-amber-600 hover:bg-amber-700 text-white font-bold h-8 text-xs rounded-xl shadow-sm"
+                        >
+                          <Unlock className="w-3.5 h-3.5 mr-1.5" /> Release Hold (₹{holdAmount?.toFixed(2)})
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center space-y-2">
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    {onHoldBalance > 0 ? "Unlinked Wallet Hold Detected" : "No Active Holds"}
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    {onHoldBalance > 0
+                      ? `The retailer has a wallet hold balance of ₹${onHoldBalance.toFixed(2)} recorded on their wallet ledger.`
+                      : "The retailer currently has zero active wallet reservations."}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+              {onHoldBalance > 0 ? (
+                <Button
+                  onClick={() => {
+                    setSelectedHoldToRelease(null);
+                    setIsReleaseAllHold(true);
+                    setReleaseHoldRemarks('');
+                    setIsReleaseHoldConfirmOpen(true);
+                  }}
+                  variant="outline"
+                  className="border-rose-300 dark:border-rose-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold h-10 text-xs rounded-xl"
+                >
+                  <Unlock className="w-4 h-4 mr-1.5" /> Release Entire Hold (₹{onHoldBalance.toFixed(2)})
+                </Button>
+              ) : <div />}
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsHoldsModalOpen(false)}
+                className="h-10 px-4 font-semibold text-xs rounded-xl"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Release Wallet Hold Confirmation Modal */}
+      {isReleaseHoldConfirmOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-w-md w-full rounded-[24px] shadow-2xl p-6 space-y-5">
+            <div className="flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Unlock className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
+                  {isReleaseAllHold ? 'Release All Wallet Holds?' : 'Release Wallet Hold'}
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">{retailer.name} ({retailer.retailerId})</p>
+              </div>
+            </div>
+
+            <div className="space-y-4 text-sm text-slate-600 dark:text-slate-300">
+              {/* Summary Box */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700/60 space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Target Reservation:</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-white">
+                    {isReleaseAllHold ? 'ALL ACTIVE HOLDS' : (selectedHoldToRelease?.orderId || 'MANUAL_RELEASE')}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Amount to Release:</span>
+                  <span className="font-mono font-bold text-amber-600 dark:text-amber-400 text-sm">
+                    ₹{(isReleaseAllHold ? onHoldBalance : (selectedHoldToRelease?.reservedAmount || selectedHoldToRelease?.amount || onHoldBalance)).toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500">Available Wallet (Before ➔ After):</span>
+                  <span className="font-mono font-bold text-emerald-600">
+                    ₹{walletBalance.toFixed(2)} ➔ ₹{(walletBalance + (isReleaseAllHold ? onHoldBalance : (selectedHoldToRelease?.reservedAmount || selectedHoldToRelease?.amount || onHoldBalance))).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Warning Notice */}
+              {selectedHoldToRelease && ['PROCESSING', 'INITIATED', 'RECHARGE_PROCESSING'].includes(selectedHoldToRelease.status) && (
+                <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs flex gap-2">
+                  <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span><strong>Warning:</strong> This transaction is actively processing. Verify provider state before releasing hold.</span>
+                </div>
+              )}
+
+              <p className="text-xs text-slate-500 leading-relaxed">
+                This action will release the held reservation back to the retailer's available wallet balance. A ledger record and audit log will be created.
+              </p>
+
+              {/* Mandatory Reason Textarea */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block">
+                  Admin Reason / Remarks <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  value={releaseHoldRemarks}
+                  onChange={(e) => setReleaseHoldRemarks(e.target.value)}
+                  placeholder="Enter mandatory reason for audit log..."
+                  className="w-full h-20 p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsReleaseHoldConfirmOpen(false)}
+                disabled={releaseHoldMutation.isPending}
+                className="h-10 px-4 font-semibold text-xs rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={!releaseHoldRemarks.trim() || releaseHoldMutation.isPending}
+                onClick={async () => {
+                  try {
+                    const releaseAmount = isReleaseAllHold ? onHoldBalance : (selectedHoldToRelease?.reservedAmount || selectedHoldToRelease?.amount || onHoldBalance);
+                    await releaseHoldMutation.mutateAsync({
+                      id: retailer._id,
+                      orderId: isReleaseAllHold ? undefined : selectedHoldToRelease?.orderId,
+                      releaseAll: isReleaseAllHold,
+                      remarks: releaseHoldRemarks
+                    });
+                    toast.success(`Successfully released ₹${releaseAmount.toFixed(2)} hold to retailer wallet.`);
+                    setIsReleaseHoldConfirmOpen(false);
+                    setIsHoldsModalOpen(false);
+                    refetch();
+                  } catch (err: any) {
+                    toast.error(err?.response?.data?.message || err.message || "Failed to release hold");
+                  }
+                }}
+                className="h-10 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-md"
+              >
+                {releaseHoldMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Unlock className="w-4 h-4 mr-1.5" />}
+                Confirm Hold Release
               </Button>
             </div>
           </div>

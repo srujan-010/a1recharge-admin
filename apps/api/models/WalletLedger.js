@@ -22,7 +22,7 @@ const walletLedgerSchema = new mongoose.Schema(
     },
     referenceType: {
       type: String,
-      enum: ['RECHARGE', 'COMMISSION', 'REFUND', 'ADD_MONEY', 'MANUAL'],
+      enum: ['RECHARGE', 'COMMISSION', 'REFUND', 'ADD_MONEY', 'MANUAL', 'HOLD_RELEASE'],
       required: true,
     },
     referenceId: {

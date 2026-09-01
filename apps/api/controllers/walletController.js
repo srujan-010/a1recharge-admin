@@ -119,6 +119,10 @@ const topupWallet = async (req, res, next) => {
     wallet.balancePaise += Number(amountPaise);
     await wallet.save();
 
+    const { normalizePaymentType } = require('../utils/paymentHelper');
+    const paymentMethodInput = req.body.paymentMethod || req.body.paymentMode || 'UPI';
+    const normalizedPaymentMethod = normalizePaymentType(paymentMethodInput);
+
     // Create a transaction record
     const transaction = await Transaction.create({
       userId: req.user._id,
@@ -126,9 +130,16 @@ const topupWallet = async (req, res, next) => {
       amountPaise: Number(amountPaise),
       status: 'success',
       service: 'wallet_topup',
-      referenceId: `TXN${Math.floor(Math.random() * 9000000) + 1000000}`,
-      description: 'Wallet top-up via Payment Gateway',
-      closingBalancePaise: wallet.balancePaise
+      referenceId: req.body.referenceId || req.body.orderId || `TXN${Math.floor(Math.random() * 9000000) + 1000000}`,
+      description: `Wallet top-up via ${normalizedPaymentMethod}`,
+      closingBalancePaise: wallet.balancePaise,
+      paymentMethod: normalizedPaymentMethod,
+      upiDetails: normalizedPaymentMethod === 'UPI' ? {
+        utr: req.body.utr || req.body.upiTransactionId || null,
+        gateway: req.body.gateway || 'UPI Gateway',
+        gatewayOrderId: req.body.gatewayOrderId || null,
+        gatewayPaymentId: req.body.gatewayPaymentId || null,
+      } : undefined
     });
 
     await Notification.create({

@@ -13,12 +13,17 @@ const getGlobalTransactions = async (req, res, next) => {
     const retailerId = req.query.retailer || '';
     const service = req.query.service || '';
     const accountType = req.query.accountType || '';
+    const paymentMethod = req.query.paymentMethod || '';
     const showTest = req.query.showTest === 'true';
 
     const query = {};
 
     if (accountType && accountType !== 'all') {
       query.accountType = accountType.toUpperCase();
+    }
+
+    if (paymentMethod && paymentMethod !== 'all') {
+      query.paymentMethod = { $regex: new RegExp(`^${paymentMethod}$`, 'i') };
     }
 
     if (!showTest) {
@@ -59,7 +64,10 @@ const getGlobalTransactions = async (req, res, next) => {
         { referenceId: { $regex: search, $options: 'i' } },
         { mobileNumber: { $regex: search, $options: 'i' } },
         { apiReference: { $regex: search, $options: 'i' } },
-        { recipientName: { $regex: search, $options: 'i' } }
+        { recipientName: { $regex: search, $options: 'i' } },
+        { 'upiDetails.utr': { $regex: search, $options: 'i' } },
+        { 'upiDetails.gatewayOrderId': { $regex: search, $options: 'i' } },
+        { 'upiDetails.gatewayPaymentId': { $regex: search, $options: 'i' } }
       ];
     }
 

@@ -204,3 +204,17 @@ export function useCreateRetailer() {
     },
   });
 }
+
+export function useReleaseRetailerHold() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, orderId, releaseAll, remarks }: { id: string; orderId?: string; releaseAll?: boolean; remarks: string }) => {
+      const { data } = await api.post(`/admin/retailers/${id}/release-hold`, { orderId, releaseAll, remarks });
+      return data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['retailers'] });
+      queryClient.invalidateQueries({ queryKey: ['retailer', variables.id] });
+    },
+  });
+}

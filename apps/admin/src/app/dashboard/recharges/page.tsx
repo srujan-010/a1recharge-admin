@@ -9,7 +9,11 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { Search, Loader2, Smartphone, MoreVertical, CheckCircle, RefreshCcw, HandCoins, AlertTriangle, MessageSquare, Download, Activity } from "lucide-react";
+import { 
+  Search, Loader2, Smartphone, MoreVertical, CheckCircle, RefreshCcw, HandCoins, 
+  AlertTriangle, MessageSquare, Download, Activity, Eye, ShieldAlert, Lock, Unlock,
+  Wallet, QrCode, CreditCard, Building2
+} from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
 // UI Components
@@ -30,7 +34,6 @@ import {
 } from "@/components/ui/dialog";
 
 import { TransactionDetailsDrawer } from "./TransactionDetailsDrawer";
-
 import { AccountTypeBadge } from "@/components/ui/account-type-badge";
 import { AccountTypeFilter, AccountTypeFilterValue } from "@/components/ui/account-type-filter";
 
@@ -41,9 +44,10 @@ export default function RechargesOperationsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState("all");
   const [operator, setOperator] = useState("");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("all");
   const [accountTypeFilter, setAccountTypeFilter] = useState<AccountTypeFilterValue>("all");
   
-  const { data, isLoading, refetch } = useRecharges(page, 20, search, status, operator, '', '', accountTypeFilter);
+  const { data, isLoading, refetch } = useRecharges(page, 20, search, status, operator, '', '', accountTypeFilter, paymentMethodFilter);
   
   const [selectedTxn, setSelectedTxn] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -70,11 +74,11 @@ export default function RechargesOperationsPage() {
   const performAction = async (orderId: string, action: string, remarks?: string) => {
     try {
       setActionLoading(orderId);
-      await api.post(`/admin/recharges/${orderId}/action`, { action, remarks });
+      const res = await api.post(`/admin/recharges/${orderId}/action`, { action, remarks });
       refetch();
-      toast.success(`Transaction updated successfully.`);
+      toast.success(res.data?.message || `Transaction updated successfully.`);
     } catch (err: any) {
-      toast.error(err.message || 'Operation failed');
+      toast.error(err.response?.data?.message || err.message || 'Operation failed');
     } finally {
       setActionLoading(null);
     }
@@ -82,89 +86,218 @@ export default function RechargesOperationsPage() {
 
   const ActionMenu = ({ row }: { row: any }) => {
     const [open, setOpen] = useState(false);
-    const [modalConfig, setModalConfig] = useState<{ type: string, action: string } | null>(null);
+    const [modalAction, setModalAction] = useState<string | null>(null);
     const [remarks, setRemarks] = useState('');
     const txn = row.original;
 
-    if (txn.status !== 'PENDING') return null;
+    const isAuthorized = ['SUPER_ADMIN', 'ADMIN', 'FINANCE'].includes(user?.role || '');
 
     const handleConfirmModal = async () => {
-      if (!modalConfig) return;
-      if (modalConfig.type === 'REASON' && !remarks.trim()) {
-        toast.error("Reason is mandatory.");
+      if (!modalAction) return;
+
+      const requiresReason = ['MARK_SUCCESS', 'MANUAL_SUCCESS', 'MARK_FAILED', 'MANUAL_FAILURE', 'REFUND', 'RELEASE_HOLD', 'ADD_NOTE'].includes(modalAction);
+      if (requiresReason && !remarks.trim()) {
+        toast.error("Admin reason/remarks is mandatory.");
         return;
       }
-      setOpen(false); // Close dropdown
-      await performAction(txn.orderId, modalConfig.action, remarks);
-      setModalConfig(null);
+
+      const targetAction = modalAction;
+      setModalAction(null);
+      setOpen(false);
+      await performAction(txn.orderId, targetAction, remarks);
       setRemarks('');
     };
 
+    const isPendingLike = ['PENDING', 'PROCESSING', 'PROVIDER_TIMEOUT', 'TIMEOUT'].includes(txn.status);
+    const canCheckStatus = !!txn.providerTransactionId;
+    const canMarkSuccess = isPendingLike || txn.status === 'FAILED';
+    const canMarkFailed = isPendingLike;
+    const canReleaseHold = txn.reservedAmount > 0 || isPendingLike;
+    const canRefund = (txn.status === 'SUCCESS' || txn.reservedAmount > 0) && !txn.refundStatus && txn.status !== 'REFUNDED';
+    const canRetry = isPendingLike || (txn.status === 'FAILED' && (txn.retryCount || 0) < 3);
+
     return (
       <div className="relative">
-        <button onClick={(e) => { e.stopPropagation(); setOpen(!open); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors">
+        <button 
+          onClick={(e) => { e.stopPropagation(); setOpen(!open); }} 
+          className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
+          title="Actions Menu"
+        >
           <MoreVertical className="w-4 h-4 text-slate-500" />
         </button>
+
         {open && (
-          <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-10 py-1" onClick={(e) => e.stopPropagation()}>
-            <button className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2" onClick={() => { setOpen(false); performAction(txn.orderId, 'CHECK_STATUS'); }}>
-              <RefreshCcw className="w-4 h-4" /> Check Live Status
+          <div 
+            className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-20 py-1 font-medium" 
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button 
+              className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+              onClick={() => { setOpen(false); setSelectedTxn(txn.orderId); }}
+            >
+              <Eye className="w-4 h-4 text-blue-500" /> View Details
             </button>
-            <button className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2" onClick={() => { setOpen(false); performAction(txn.orderId, 'RETRY'); }}>
-              <Activity className="w-4 h-4" /> Retry Recharge
-            </button>
-            {['SUPER_ADMIN', 'FINANCE'].includes(user?.role || '') && (
-              <button className="w-full text-left px-4 py-2 text-sm text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 flex items-center gap-2" onClick={() => { setModalConfig({ type: 'CONFIRM', action: 'REFUND' }); }}>
-                <HandCoins className="w-4 h-4" /> Refund Wallet
+
+            {canCheckStatus && (
+              <button 
+                className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                onClick={() => { setOpen(false); performAction(txn.orderId, 'CHECK_STATUS'); }}
+              >
+                <RefreshCcw className="w-4 h-4 text-indigo-500" /> Check Provider Status
               </button>
             )}
-            <button className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2" onClick={() => { setModalConfig({ type: 'REASON', action: 'ADD_NOTE' }); }}>
-              <MessageSquare className="w-4 h-4" /> Add Internal Note
-            </button>
-            {user?.role === 'SUPER_ADMIN' && (
-              <div className="border-t border-slate-100 dark:border-slate-800 mt-1 pt-1">
-                <button className="w-full text-left px-4 py-2 text-sm text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 flex items-center gap-2" onClick={() => { setModalConfig({ type: 'REASON', action: 'MANUAL_SUCCESS' }); }}>
-                  <CheckCircle className="w-4 h-4" /> Force Success
-                </button>
-                <button className="w-full text-left px-4 py-2 text-sm text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 flex items-center gap-2" onClick={() => { setModalConfig({ type: 'REASON', action: 'MANUAL_FAILURE' }); }}>
-                  <AlertTriangle className="w-4 h-4" /> Force Failure
-                </button>
-              </div>
+
+            {canRetry && (
+              <button 
+                className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                onClick={() => { setOpen(false); performAction(txn.orderId, 'RETRY'); }}
+              >
+                <Activity className="w-4 h-4 text-amber-500" /> Retry Recharge
+              </button>
             )}
+
+            {isAuthorized && canMarkSuccess && (
+              <button 
+                className="w-full text-left px-4 py-2 text-sm text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 flex items-center gap-2"
+                onClick={() => { setOpen(false); setModalAction('MARK_SUCCESS'); }}
+              >
+                <CheckCircle className="w-4 h-4" /> Mark as Success
+              </button>
+            )}
+
+            {isAuthorized && canMarkFailed && (
+              <button 
+                className="w-full text-left px-4 py-2 text-sm text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 flex items-center gap-2"
+                onClick={() => { setOpen(false); setModalAction('MARK_FAILED'); }}
+              >
+                <AlertTriangle className="w-4 h-4" /> Mark as Failed
+              </button>
+            )}
+
+            {isAuthorized && canReleaseHold && (
+              <button 
+                className="w-full text-left px-4 py-2 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 flex items-center gap-2"
+                onClick={() => { setOpen(false); setModalAction('RELEASE_HOLD'); }}
+              >
+                <Unlock className="w-4 h-4" /> Release Hold (₹{txn.amount})
+              </button>
+            )}
+
+            {isAuthorized && canRefund && (
+              <button 
+                className="w-full text-left px-4 py-2 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 flex items-center gap-2"
+                onClick={() => { setOpen(false); setModalAction('REFUND'); }}
+              >
+                <HandCoins className="w-4 h-4" /> Refund Wallet (₹{txn.amount})
+              </button>
+            )}
+
+            <button 
+              className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 border-t border-slate-100 dark:border-slate-800 mt-1 pt-1"
+              onClick={() => { setOpen(false); setModalAction('ADD_NOTE'); }}
+            >
+              <MessageSquare className="w-4 h-4 text-slate-400" /> Add Admin Note
+            </button>
           </div>
         )}
 
-        <Dialog open={!!modalConfig} onOpenChange={(val) => { if(!val) { setModalConfig(null); setRemarks(''); } }}>
-          <DialogContent onClick={(e) => e.stopPropagation()}>
+        {/* Confirmation Modal */}
+        <Dialog open={!!modalAction} onOpenChange={(val) => { if (!val) { setModalAction(null); setRemarks(''); } }}>
+          <DialogContent onClick={(e) => e.stopPropagation()} className="max-w-md">
             <DialogHeader>
-              <DialogTitle>
-                {modalConfig?.type === 'CONFIRM' ? 'Confirm Action' : 'Force Manual Override'}
+              <DialogTitle className="flex items-center gap-2">
+                {modalAction === 'REFUND' && <HandCoins className="w-5 h-5 text-purple-600" />}
+                {modalAction === 'MARK_SUCCESS' && <CheckCircle className="w-5 h-5 text-emerald-600" />}
+                {modalAction === 'MARK_FAILED' && <AlertTriangle className="w-5 h-5 text-rose-600" />}
+                {modalAction === 'RELEASE_HOLD' && <Unlock className="w-5 h-5 text-amber-600" />}
+                {modalAction === 'ADD_NOTE' && <MessageSquare className="w-5 h-5 text-blue-600" />}
+                {modalAction === 'MARK_SUCCESS' && 'Confirm Recharge Success'}
+                {modalAction === 'MARK_FAILED' && 'Confirm Recharge Failure'}
+                {modalAction === 'REFUND' && 'Refund Recharge to Retailer Wallet'}
+                {modalAction === 'RELEASE_HOLD' && 'Release Held Amount'}
+                {modalAction === 'ADD_NOTE' && 'Add Admin Note'}
               </DialogTitle>
-              <DialogDescription>
-                {modalConfig?.action === 'REFUND' 
-                  ? 'Are you sure you want to completely refund this transaction? This will debit the company wallet and credit the retailer.'
-                  : 'Please provide a reason for this action. This will be recorded in the audit logs.'}
-              </DialogDescription>
-            </DialogHeader>
-            {modalConfig?.type === 'REASON' && (
-              <div className="py-4">
-                <label className="text-sm font-medium mb-1 block">Reason *</label>
-                <textarea
-                  className="w-full min-h-[100px] p-3 rounded-md border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary text-sm"
-                  placeholder="Enter detailed reason..."
-                  value={remarks}
-                  onChange={(e) => setRemarks(e.target.value)}
-                  autoFocus
-                />
+              <div className="space-y-3 pt-2 text-sm text-slate-600 dark:text-slate-300">
+                {/* Summary Box */}
+                <div className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Order ID:</span>
+                    <span className="font-mono font-bold text-slate-900 dark:text-white">{txn.orderId}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Retailer:</span>
+                    <span className="font-bold text-slate-900 dark:text-white">{txn.userId?.name || 'Retailer'} ({txn.userId?.retailerId})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Recharge Amount:</span>
+                    <span className="font-mono font-bold text-slate-900 dark:text-white">₹{txn.amount?.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Current Status:</span>
+                    <span className="font-bold uppercase text-slate-900 dark:text-white">{txn.status}</span>
+                  </div>
+                </div>
+
+                {/* Warning Notice Box */}
+                {txn.status === 'PROVIDER_TIMEOUT' && (
+                  <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-lg border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs flex gap-2">
+                    <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span><strong>Provider status could not be confirmed.</strong> Please ensure you have checked the provider status before changing state.</span>
+                  </div>
+                )}
+
+                {modalAction === 'REFUND' && (
+                  <div className="bg-rose-50 dark:bg-rose-950/40 p-3 rounded-lg border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 text-xs space-y-1">
+                    <p className="font-bold">This will return ₹{txn.amount?.toFixed(2)} to the retailer wallet.</p>
+                    <p>A refund ledger entry and audit log will be created. This action cannot be reversed.</p>
+                  </div>
+                )}
+
+                {modalAction === 'RELEASE_HOLD' && (
+                  <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-lg border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs">
+                    <p className="font-bold">Release ₹{txn.amount?.toFixed(2)} from hold to retailer wallet?</p>
+                    <p>This will move the held amount back to retailer available balance.</p>
+                  </div>
+                )}
               </div>
-            )}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => { setModalConfig(null); setRemarks(''); }} disabled={!!actionLoading}>
+            </DialogHeader>
+
+            {/* Mandatory Reason Input */}
+            <div className="py-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1 block">
+                Admin Reason / Remarks <span className="text-rose-500">*</span>
+              </label>
+              <textarea
+                className="w-full min-h-[90px] p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-primary text-sm font-medium"
+                placeholder={
+                  modalAction === 'MARK_SUCCESS' ? "e.g., Provider confirmed success manually..." :
+                  modalAction === 'MARK_FAILED' ? "e.g., Provider confirmed failed..." :
+                  modalAction === 'REFUND' ? "e.g., Customer requested refund, provider failed..." :
+                  modalAction === 'RELEASE_HOLD' ? "e.g., Releasing pending hold..." :
+                  "Enter admin reason..."
+                }
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                autoFocus
+              />
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => { setModalAction(null); setRemarks(''); }} disabled={!!actionLoading}>
                 Cancel
               </Button>
-              <Button onClick={handleConfirmModal} disabled={!!actionLoading}>
+              <Button 
+                onClick={handleConfirmModal} 
+                disabled={!!actionLoading || !remarks.trim()}
+                className={
+                  modalAction === 'REFUND' ? 'bg-purple-600 hover:bg-purple-700 text-white' :
+                  modalAction === 'MARK_FAILED' ? 'bg-rose-600 hover:bg-rose-700 text-white' :
+                  modalAction === 'RELEASE_HOLD' ? 'bg-amber-600 hover:bg-amber-700 text-white' :
+                  'bg-emerald-600 hover:bg-emerald-700 text-white'
+                }
+              >
                 {actionLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Confirm
+                Confirm Action
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -212,7 +345,7 @@ export default function RechargesOperationsPage() {
       header: "Operator",
       cell: (info: any) => (
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-100 dark:border-blue-800">
+          <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center border border-blue-100 dark:border-blue-800 font-bold text-xs">
             {info.getValue().substring(0, 2)}
           </div>
           <div className="flex flex-col">
@@ -250,34 +383,68 @@ export default function RechargesOperationsPage() {
       ),
     },
     {
+      accessorKey: "paymentMethod",
+      header: "Payment Method",
+      cell: (info: any) => {
+        const method = (info.getValue() || 'wallet').toLowerCase();
+        let label = "Wallet";
+        let badgeStyle = "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200 dark:border-blue-800";
+        let Icon = Wallet;
+
+        if (method === 'upi') {
+          label = "UPI";
+          badgeStyle = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800";
+          Icon = QrCode;
+        } else if (method === 'gateway') {
+          label = "Gateway";
+          badgeStyle = "bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400 border-purple-200 dark:border-purple-800";
+          Icon = CreditCard;
+        } else if (method === 'bank_transfer') {
+          label = "Bank Transfer";
+          badgeStyle = "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200 dark:border-amber-800";
+          Icon = Building2;
+        }
+
+        return (
+          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold border ${badgeStyle}`}>
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+          </span>
+        );
+      },
+    },
+    {
       accessorKey: "status",
-      header: "Status",
+      header: "Status & Wallet State",
       cell: (info: any) => {
         const val = info.getValue();
         const txn = info.row.original;
         
-        let badgeColor = "bg-slate-100 text-slate-600";
-        if (val === 'SUCCESS') badgeColor = "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800";
-        if (val === 'FAILED') badgeColor = "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 border border-rose-200 dark:border-rose-800";
-        if (val === 'PENDING') badgeColor = "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-800";
-        if (val === 'REFUNDED') badgeColor = "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800";
+        let badgeColor = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
+        if (val === 'SUCCESS') badgeColor = "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800";
+        if (val === 'FAILED') badgeColor = "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-200 dark:border-rose-800";
+        if (val === 'PENDING' || val === 'PROCESSING') badgeColor = "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-200 dark:border-amber-800";
+        if (val === 'PROVIDER_TIMEOUT' || val === 'TIMEOUT') badgeColor = "bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400 border border-orange-200 dark:border-orange-800";
+        if (val === 'REFUNDED') badgeColor = "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400 border border-purple-200 dark:border-purple-800";
 
-        // Pending Timer
-        let pendingTimer = null;
-        if (val === 'PENDING') {
-          const diffMins = Math.floor((new Date().getTime() - new Date(txn.createdAt).getTime()) / 60000);
-          let timerColor = "text-emerald-600";
-          if (diffMins > 10) timerColor = "text-amber-600";
-          if (diffMins > 30) timerColor = "text-rose-600 font-bold";
-          pendingTimer = <span className={`text-[10px] mt-1 ${timerColor}`}>{diffMins} min ago</span>;
+        // Wallet Hold State Indicator
+        let walletState = null;
+        if (txn.reservedAmount > 0) {
+          walletState = <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800 mt-1"><Lock className="w-2.5 h-2.5" /> ₹{txn.reservedAmount} HELD</span>;
+        } else if (val === 'SUCCESS') {
+          walletState = <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium">DEBITED</span>;
+        } else if (val === 'REFUNDED') {
+          walletState = <span className="text-[10px] text-purple-600 dark:text-purple-400 mt-0.5 font-medium">REFUNDED</span>;
+        } else if (val === 'FAILED') {
+          walletState = <span className="text-[10px] text-slate-400 mt-0.5 font-medium">RELEASED</span>;
         }
 
         return (
           <div className="flex flex-col items-start">
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${badgeColor}`}>
-              {val}
+              {val === 'PROVIDER_TIMEOUT' ? 'TIMEOUT' : val}
             </span>
-            {pendingTimer}
+            {walletState}
           </div>
         );
       },
@@ -304,7 +471,7 @@ export default function RechargesOperationsPage() {
     <div className="space-y-6 max-w-[1400px] mx-auto pb-12">
       <PageHeader 
         title="Recharge Operations Center"
-        description="Comprehensive control over all mobile and DTH recharges. Track, refund, or retry pending operations."
+        description="Comprehensive control over mobile and DTH recharges. Perform status checks, hold releases, or idempotent refunds safely."
         actions={
           <Button variant="outline" onClick={() => refetch()} className="gap-2">
             <RefreshCcw className="w-4 h-4" /> Refresh
@@ -332,6 +499,17 @@ export default function RechargesOperationsPage() {
             showAll={true}
           />
           <select
+            value={paymentMethodFilter}
+            onChange={(e) => { setPaymentMethodFilter(e.target.value); setPage(1); }}
+            className="h-10 px-3 py-2 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-sm font-medium w-full md:w-40"
+          >
+            <option value="all">All Payment Types</option>
+            <option value="wallet">Wallet</option>
+            <option value="upi">UPI</option>
+            <option value="gateway">Gateway</option>
+            <option value="bank_transfer">Bank Transfer</option>
+          </select>
+          <select
             value={status}
             onChange={(e) => { setStatus(e.target.value); setPage(1); }}
             className="h-10 px-3 py-2 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-sm font-medium w-full md:w-40"
@@ -339,6 +517,7 @@ export default function RechargesOperationsPage() {
             <option value="all">All Statuses</option>
             <option value="SUCCESS">Success</option>
             <option value="PENDING">Pending</option>
+            <option value="PROVIDER_TIMEOUT">Timeout</option>
             <option value="FAILED">Failed</option>
             <option value="REFUNDED">Refunded</option>
           </select>
@@ -392,7 +571,6 @@ export default function RechargesOperationsPage() {
                 </TableRow>
               ) : (
                 table.getRowModel().rows.map((row) => {
-                  // Basic Fraud Detection Highlight: Same retailer multiple failed or High Value
                   const isSuspicious = row.original.amount > 2000;
                   return (
                     <TableRow 

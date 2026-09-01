@@ -38,12 +38,12 @@ export interface TransactionsResponse {
   };
 }
 
-export function useGlobalTransactions(page = 1, limit = 20, search = '', status = 'all', retailerId = '', service = '', showTest = false, accountType = 'all') {
+export function useGlobalTransactions(page = 1, limit = 20, search = '', status = 'all', retailerId = '', service = '', showTest = false, accountType = 'all', paymentMethod = 'all') {
   return useQuery({
-    queryKey: ['global-transactions', page, limit, search, status, retailerId, service, showTest, accountType],
+    queryKey: ['global-transactions', page, limit, search, status, retailerId, service, showTest, accountType, paymentMethod],
     queryFn: async () => {
       const { data } = await api.get<TransactionsResponse>('/admin/transactions', {
-        params: { page, limit, search, status, retailer: retailerId, service, showTest, accountType }
+        params: { page, limit, search, status, retailer: retailerId, service, showTest, accountType, paymentMethod }
       });
       return data;
     },
@@ -51,12 +51,12 @@ export function useGlobalTransactions(page = 1, limit = 20, search = '', status 
   });
 }
 
-export function useRecharges(page = 1, limit = 20, search = '', status = 'all', operator = '', startDate = '', endDate = '', accountType = 'all') {
+export function useRecharges(page = 1, limit = 20, search = '', status = 'all', operator = '', startDate = '', endDate = '', accountType = 'all', paymentMethod = 'all') {
   return useQuery({
-    queryKey: ['recharges', page, limit, search, status, operator, startDate, endDate, accountType],
+    queryKey: ['recharges', page, limit, search, status, operator, startDate, endDate, accountType, paymentMethod],
     queryFn: async () => {
       const { data } = await api.get('/admin/recharges', {
-        params: { page, limit, search, status, operator, startDate, endDate, accountType }
+        params: { page, limit, search, status, operator, startDate, endDate, accountType, paymentMethod }
       });
       return data;
     },

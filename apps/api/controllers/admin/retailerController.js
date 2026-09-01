@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../../models/User');
 const Wallet = require('../../models/Wallet');
 const WalletLedger = require('../../models/WalletLedger');
@@ -9,6 +10,7 @@ const CommissionHistory = require('../../models/CommissionHistory');
 const { logAudit } = require('../../utils/auditHelper');
 const NotificationService = require('../../services/notification.service');
 const OtpSession = require('../../models/OtpSession');
+const walletService = require('../../services/wallet/wallet.service');
 
 function getISTDateRanges() {
   const now = new Date();
@@ -263,6 +265,15 @@ const getRetailerById = async (req, res, next) => {
     const successRate = totalRecharges > 0 ? ((tx.successfulRecharges / totalRecharges) * 100).toFixed(1) : 0;
     const avgRechargePaise = (tx.successfulRecharges || 0) > 0 ? (tx.lifetimeRecharge || 0) / tx.successfulRecharges : 0;
 
+    // Fetch active holds/reserved transactions
+    const activeHolds = await RechargeTransaction.find({
+      userId: retailer._id,
+      $or: [
+        { reservedAmount: { $gt: 0 } },
+        { status: { $in: ['PENDING', 'PROCESSING', 'PROVIDER_TIMEOUT', 'TIMEOUT'] } }
+      ]
+    }).sort({ createdAt: -1 }).lean();
+
     res.status(200).json({
       success: true,
       data: {
@@ -275,6 +286,17 @@ const getRetailerById = async (req, res, next) => {
         bank: bank || null,
         recentTransactions: recentTxns,
         recentLogins: lastLogins,
+        activeHolds: activeHolds.map(h => ({
+          _id: h._id,
+          orderId: h.orderId,
+          amount: h.amount,
+          operatorCode: h.operatorCode,
+          providerName: h.providerName || 'A1Topup',
+          status: h.status,
+          reservedAmount: h.reservedAmount || 0,
+          createdAt: h.createdAt,
+          mobileNumber: h.mobileNumber
+        })),
         businessStats: {
           lifetimeRechargePaise: tx.lifetimeRecharge || 0,
           todaysRechargePaise: tx.todaysRecharge || 0,
@@ -632,6 +654,120 @@ const revokeRetailerSessions = async (req, res, next) => {
   }
 };
 
+// @desc    Manually release retailer wallet hold/reservation
+// @route   POST /api/admin/retailers/:id/release-hold
+// @access  Private (SuperAdmin, Admin, Finance)
+const releaseRetailerHold = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { orderId, releaseAll, remarks } = req.body;
+    const admin = req.admin;
+
+    if (!remarks || !remarks.trim()) {
+      return res.status(400).json({ success: false, message: 'Admin reason/remarks are required for releasing hold.' });
+    }
+
+    const retailer = await User.findById(id).lean();
+    if (!retailer) {
+      return res.status(404).json({ success: false, message: 'Retailer not found' });
+    }
+
+    const wallet = await Wallet.findOne({ userId: retailer._id });
+    if (!wallet) {
+      return res.status(404).json({ success: false, message: 'Retailer wallet not found' });
+    }
+
+    const previousHoldPaise = wallet.onHoldPaise || 0;
+    const previousBalancePaise = wallet.balancePaise || 0;
+
+    if (previousHoldPaise <= 0) {
+      return res.status(400).json({ success: false, message: 'Retailer currently has no wallet hold balance to release.' });
+    }
+
+    let releaseAmountPaise = 0;
+    let targetTransaction = null;
+
+    if (orderId) {
+      targetTransaction = await RechargeTransaction.findOne({ 
+        $or: [{ orderId }, { _id: mongoose.Types.ObjectId.isValid(orderId) ? orderId : null }],
+        userId: retailer._id 
+      });
+
+      if (!targetTransaction) {
+        return res.status(404).json({ success: false, message: `No transaction found matching ${orderId} for this retailer.` });
+      }
+
+      // Protection Check: Active Processing Transaction Guard
+      if (['PROCESSING', 'INITIATED', 'RECHARGE_PROCESSING'].includes(targetTransaction.status)) {
+        return res.status(400).json({
+          success: false,
+          isProcessingWarning: true,
+          message: `Transaction ${targetTransaction.orderId} is currently actively processing. Please verify provider status before releasing hold.`,
+          data: targetTransaction
+        });
+      }
+
+      const txnHoldPaise = targetTransaction.reservedAmount > 0 ? (targetTransaction.reservedAmount * 100) : previousHoldPaise;
+      releaseAmountPaise = Math.min(txnHoldPaise, previousHoldPaise);
+    } else {
+      releaseAmountPaise = previousHoldPaise;
+    }
+
+    const releaseAmountRupees = releaseAmountPaise / 100;
+
+    // Perform atomic wallet hold release via wallet service
+    const updatedWallet = await walletService.releaseHoldWithLedger(retailer._id, releaseAmountRupees, {
+      referenceId: targetTransaction?._id || retailer._id,
+      orderId: targetTransaction?.orderId || 'MANUAL_RELEASE',
+      description: `Manual admin hold release by ${admin.name}: ${remarks}`
+    });
+
+    if (targetTransaction) {
+      targetTransaction.reservedAmount = 0;
+      if (['PENDING', 'PROVIDER_TIMEOUT', 'TIMEOUT'].includes(targetTransaction.status)) {
+        targetTransaction.status = 'FAILED';
+        targetTransaction.failureReason = `Hold manually released by admin (${admin.name}): ${remarks}`;
+      }
+      await targetTransaction.save();
+    } else {
+      await RechargeTransaction.updateMany(
+        { userId: retailer._id, reservedAmount: { $gt: 0 } },
+        { $set: { reservedAmount: 0 } }
+      );
+    }
+
+    await logAudit(
+      admin,
+      'RECHARGE_HOLD_RELEASED',
+      'RETAILER',
+      {
+        previousHoldBalance: previousHoldPaise / 100,
+        previousAvailableBalance: previousBalancePaise / 100,
+      },
+      {
+        newHoldBalance: updatedWallet.onHoldPaise / 100,
+        newAvailableBalance: updatedWallet.balancePaise / 100,
+        releasedAmount: releaseAmountRupees,
+        orderId: targetTransaction?.orderId || 'ALL_HOLDS',
+        reason: remarks
+      },
+      req,
+      retailer._id
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully released ₹${releaseAmountRupees.toFixed(2)} hold to retailer wallet.`,
+      wallet: {
+        balance: updatedWallet.balancePaise / 100,
+        onHold: updatedWallet.onHoldPaise / 100
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getRetailers,
   getRetailerById,
@@ -642,4 +778,5 @@ module.exports = {
   deleteRetailer,
   resetRetailerSecurity,
   revokeRetailerSessions,
+  releaseRetailerHold,
 };

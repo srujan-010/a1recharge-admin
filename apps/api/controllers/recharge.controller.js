@@ -123,6 +123,9 @@ const executeRecharge = async (req, res, next) => {
 
     console.log(`[Recharge Log Stage 1] Request Received | OrderID: ${orderId} | Phone: ${mobileNumber} | Amount: ₹${amount}`);
 
+    const { normalizePaymentType } = require('../utils/paymentHelper');
+    const normalizedPaymentMethod = normalizePaymentType(paymentMode || req.body.paymentMethod || 'WALLET');
+
     // Create Initial Transaction Documents BEFORE any checks/provider calls
     transactionDoc = await RechargeTransaction.create({
       orderId,
@@ -135,6 +138,7 @@ const executeRecharge = async (req, res, next) => {
       circleCode: 'UNKNOWN',
       status: 'PENDING',
       reservedAmount: amount || 0,
+      paymentMethod: normalizedPaymentMethod,
     });
 
     globalTransactionDoc = await Transaction.create({
@@ -148,7 +152,7 @@ const executeRecharge = async (req, res, next) => {
       recipientName: mobileNumber || '',
       mobileNumber: mobileNumber || '',
       operatorName: 'Unknown',
-      paymentMethod: paymentMode,
+      paymentMethod: normalizedPaymentMethod,
     });
 
     console.log(`[Recharge Log Stage 2] Transaction Documents Created | OrderID: ${orderId}`);

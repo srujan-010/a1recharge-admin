@@ -1,6 +1,7 @@
 const RechargeTransaction = require('../models/RechargeTransaction');
 const CommissionHistory = require('../models/CommissionHistory');
 const WalletLedger = require('../models/WalletLedger');
+const Transaction = require('../models/Transaction');
 
 const OPERATOR_NAME_MAP = {
   AT: 'Airtel',
@@ -732,6 +733,169 @@ class FinancialSummaryService {
     ]);
 
     return report;
+  }
+
+  /**
+   * Authoritative Payment Type Overview Calculation Method
+   * Calculates distinct metrics for Wallet transactions, UPI collections, and other payment sources
+   * without double-counting wallet top-ups against recharge debits.
+   */
+  static async getPaymentTypeOverview({ startDate, endDate, period, accountType, status, showTest = false }) {
+    const { startDate: start, endDate: end } = this.parseDateRange(startDate, endDate, period);
+    const { normalizePaymentType } = require('../utils/paymentHelper');
+
+    const matchQuery = {
+      createdAt: { $gte: start, $lte: end },
+    };
+
+    if (!showTest) {
+      matchQuery.isTest = { $ne: true };
+    }
+
+    if (accountType && accountType.toUpperCase() !== 'ALL') {
+      matchQuery.accountType = accountType.toUpperCase();
+    }
+
+    if (status && status.toUpperCase() !== 'ALL') {
+      matchQuery.status = { $regex: new RegExp(`^${status}$`, 'i') };
+    }
+
+    // 1. Transaction collection breakdown by paymentMethod & status & type
+    const txnAgg = await Transaction.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: {
+            paymentMethod: { $ifNull: ['$paymentMethod', 'UNKNOWN'] },
+            status: '$status',
+            type: '$type',
+          },
+          count: { $sum: 1 },
+          totalAmountPaise: { $sum: '$amountPaise' },
+        },
+      },
+    ]);
+
+    // 2. Ledger aggregation for exact Wallet Movement
+    const ledgerMatch = { createdAt: { $gte: start, $lte: end } };
+    const ledgerAgg = await WalletLedger.aggregate([
+      { $match: ledgerMatch },
+      {
+        $group: {
+          _id: {
+            transactionType: '$transactionType',
+            referenceType: '$referenceType',
+          },
+          count: { $sum: 1 },
+          totalAmountRupees: { $sum: '$amount' },
+        },
+      },
+    ]);
+
+    // Initialize buckets
+    let walletCreditsRupees = 0;
+    let walletDebitsRupees = 0;
+    let walletRefundsRupees = 0;
+    let walletHoldReleasesRupees = 0;
+    let walletCount = 0;
+
+    ledgerAgg.forEach(item => {
+      const type = item._id.transactionType;
+      const ref = item._id.referenceType;
+      const amt = item.totalAmountRupees || 0;
+      walletCount += item.count || 0;
+
+      if (type === 'CREDIT') {
+        walletCreditsRupees += amt;
+        if (ref === 'REFUND') walletRefundsRupees += amt;
+      } else if (type === 'DEBIT') {
+        walletDebitsRupees += amt;
+      }
+      if (ref === 'HOLD_RELEASE') {
+        walletHoldReleasesRupees += amt;
+      }
+    });
+
+    let upiCollectionsPaise = 0;
+    let upiSuccessPaise = 0;
+    let upiSuccessCount = 0;
+    let upiPendingPaise = 0;
+    let upiPendingCount = 0;
+    let upiFailedPaise = 0;
+    let upiFailedCount = 0;
+    let upiRefundedPaise = 0;
+    let upiRefundedCount = 0;
+
+    const breakdownMap = {
+      WALLET: { count: 0, amountPaise: 0 },
+      UPI: { count: 0, amountPaise: 0 },
+      BANK_TRANSFER: { count: 0, amountPaise: 0 },
+      CASH: { count: 0, amountPaise: 0 },
+      CARD: { count: 0, amountPaise: 0 },
+      OTHER: { count: 0, amountPaise: 0 },
+      UNKNOWN: { count: 0, amountPaise: 0 },
+    };
+
+    txnAgg.forEach(item => {
+      const rawMethod = item._id.paymentMethod;
+      const normMethod = normalizePaymentType(rawMethod);
+      const st = (item._id.status || '').toLowerCase();
+      const cnt = item.count || 0;
+      const paise = item.totalAmountPaise || 0;
+
+      if (!breakdownMap[normMethod]) {
+        breakdownMap[normMethod] = { count: 0, amountPaise: 0 };
+      }
+      breakdownMap[normMethod].count += cnt;
+      breakdownMap[normMethod].amountPaise += paise;
+
+      if (normMethod === 'UPI') {
+        if (st === 'success') {
+          upiCollectionsPaise += paise;
+          upiSuccessPaise += paise;
+          upiSuccessCount += cnt;
+        } else if (st === 'pending' || st === 'processing') {
+          upiPendingPaise += paise;
+          upiPendingCount += cnt;
+        } else if (st === 'failed' || st === 'cancelled') {
+          upiFailedPaise += paise;
+          upiFailedCount += cnt;
+        } else if (st === 'refunded' || st === 'reversed') {
+          upiRefundedPaise += paise;
+          upiRefundedCount += cnt;
+        }
+      }
+    });
+
+    return {
+      period: period || 'custom',
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      walletOverview: {
+        totalCreditsRupees: Number(walletCreditsRupees.toFixed(2)),
+        totalDebitsRupees: Number(walletDebitsRupees.toFixed(2)),
+        netMovementRupees: Number((walletCreditsRupees - walletDebitsRupees).toFixed(2)),
+        totalRefundsRupees: Number(walletRefundsRupees.toFixed(2)),
+        totalHoldReleasesRupees: Number(walletHoldReleasesRupees.toFixed(2)),
+        totalCount: walletCount,
+      },
+      upiOverview: {
+        totalCollectionsRupees: Number((upiCollectionsPaise / 100).toFixed(2)),
+        successAmountRupees: Number((upiSuccessPaise / 100).toFixed(2)),
+        successCount: upiSuccessCount,
+        pendingAmountRupees: Number((upiPendingPaise / 100).toFixed(2)),
+        pendingCount: upiPendingCount,
+        failedAmountRupees: Number((upiFailedPaise / 100).toFixed(2)),
+        failedCount: upiFailedCount,
+        refundedAmountRupees: Number((upiRefundedPaise / 100).toFixed(2)),
+        refundedCount: upiRefundedCount,
+      },
+      paymentTypeBreakdown: Object.keys(breakdownMap).map(key => ({
+        paymentType: key,
+        count: breakdownMap[key].count,
+        volumeRupees: Number((breakdownMap[key].amountPaise / 100).toFixed(2)),
+      })),
+    };
   }
 }
 
