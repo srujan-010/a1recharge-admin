@@ -18,11 +18,11 @@ const sendFCMNotification = async (req, res, next) => {
 
     let query = { fcmToken: { $ne: null } };
     
-    // Process Advanced Filters if targeting "Multiple" or "All"
+    // Process Advanced Filters if targeting "MULTIPLE" or "ALL"
     if (recipients === 'ALL' || recipients === 'MULTIPLE') {
       if (filters) {
         if (filters.state) query.state = filters.state;
-        if (filters.district) query.city = filters.district; // assuming district maps to city or we have a district field
+        if (filters.district) query.city = filters.district;
         if (filters.kycStatus) query.kycStatus = filters.kycStatus;
         if (filters.status) query.status = filters.status;
       }
@@ -33,15 +33,30 @@ const sendFCMNotification = async (req, res, next) => {
       throw new Error('Invalid recipients specified or no registered devices found.');
     }
 
-    const targetUsers = await User.find(query);
+    const targetUsers = await User.find(query).select('_id name phone retailerId fcmToken');
 
     if (targetUsers.length === 0) {
       res.status(400);
       throw new Error('No devices found matching the targeting criteria.');
     }
 
-    const messaging = getMessaging(getApp());
+    const app = getApp();
+    if (!app) {
+      return res.status(400).json({
+        success: false,
+        total: targetUsers.length,
+        sent: 0,
+        failed: targetUsers.length,
+        message: 'Firebase Admin SDK is not configured. Please supply service-account.json or FIREBASE_SERVICE_ACCOUNT environment variable.',
+        data: targetUsers.map(u => ({ userId: u._id, status: 'FAILED', error: 'Firebase Admin SDK not initialized' }))
+      });
+    }
+
+    const messaging = getMessaging(app);
     const sendResults = [];
+    let sentCount = 0;
+    let failedCount = 0;
+    let deactivatedTokensCount = 0;
 
     for (const user of targetUsers) {
       const messagePayload = {
@@ -61,6 +76,7 @@ const sendFCMNotification = async (req, res, next) => {
 
       try {
         const response = await messaging.send(messagePayload);
+        sentCount++;
         
         await NotificationHistory.create({
           userId: user._id,
@@ -70,13 +86,40 @@ const sendFCMNotification = async (req, res, next) => {
           imageUrl,
           deepLink,
           priority,
-          sentBy: req.admin._id,
+          sentBy: req.admin ? req.admin._id : null,
           firebaseMessageId: response,
           status: 'DELIVERED',
         });
         
-        sendResults.push({ userId: user._id, status: 'DELIVERED', messageId: response });
+        sendResults.push({ userId: user._id, status: 'SENT', messageId: response });
       } catch (err) {
+        failedCount++;
+        const isInvalidToken = (
+          err.code === 'messaging/invalid-registration-token' ||
+          err.code === 'messaging/registration-token-not-registered' ||
+          err.code === 'messaging/invalid-argument' ||
+          (err.message && (
+            err.message.includes('not-registered') ||
+            err.message.includes('not found') ||
+            err.message.includes('INVALID_ARGUMENT') ||
+            err.message.includes('UNREGISTERED') ||
+            err.message.includes('not a valid FCM') ||
+            err.message.includes('invalid')
+          ))
+        );
+
+        let safeError = err.message || 'Firebase delivery error';
+
+        if (isInvalidToken) {
+          safeError = 'FCM token invalid or unregistered (automatically deactivated)';
+          try {
+            await User.updateOne({ _id: user._id }, { $set: { fcmToken: null } });
+            deactivatedTokensCount++;
+          } catch (dbErr) {
+            console.error(`[FCM] Failed to deactivate stale token for user ${user._id}:`, dbErr.message);
+          }
+        }
+
         await NotificationHistory.create({
           userId: user._id,
           fcmToken: user.fcmToken,
@@ -85,34 +128,38 @@ const sendFCMNotification = async (req, res, next) => {
           imageUrl,
           deepLink,
           priority,
-          sentBy: req.admin._id,
+          sentBy: req.admin ? req.admin._id : null,
           status: 'FAILED',
-          errorDetails: err.message,
+          errorDetails: safeError,
         });
         
-        // Mark inactive if token is unregistered
-        if (err.code === 'messaging/registration-token-not-registered') {
-          user.fcmToken = null;
-          await user.save();
-        }
-        
-        sendResults.push({ userId: user._id, status: 'FAILED', error: err.message });
+        sendResults.push({ userId: user._id, status: 'FAILED', error: safeError });
       }
     }
+
+    console.log(`[FCM Push Summary] Total: ${targetUsers.length} | Sent: ${sentCount} | Failed: ${failedCount} | Deactivated Tokens: ${deactivatedTokensCount}`);
 
     await logAudit(
       req.admin, 
       'FCM_NOTIFICATION_SENT', 
       'PUSH_NOTIFICATION', 
       null, 
-      { title, targetCount: targetUsers.length }, 
+      { title, total: targetUsers.length, sent: sentCount, failed: failedCount }, 
       req,
       targetUsers.length === 1 ? targetUsers[0]._id : null
     );
 
-    res.status(200).json({
-      success: true,
-      message: `Push notification processed for ${targetUsers.length} devices.`,
+    const isSuccess = sentCount > 0;
+    const responseMessage = isSuccess
+      ? `Push notification processed (${sentCount} sent, ${failedCount} failed).`
+      : 'All push notifications failed.';
+
+    return res.status(200).json({
+      success: isSuccess,
+      total: targetUsers.length,
+      sent: sentCount,
+      failed: failedCount,
+      message: responseMessage,
       data: sendResults,
     });
   } catch (error) {

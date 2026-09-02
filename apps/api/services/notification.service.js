@@ -169,8 +169,23 @@ class NotificationService {
             fcmError = pushErr.message;
             console.warn(`[NotificationEngine] Push failed for user ${userId}: ${pushErr.message}`);
 
-            if (pushErr.code === 'messaging/registration-token-not-registered') {
-              await User.findByIdAndUpdate(userId, { fcmToken: null });
+            const isInvalidToken = (
+              pushErr.code === 'messaging/invalid-registration-token' ||
+              pushErr.code === 'messaging/registration-token-not-registered' ||
+              pushErr.code === 'messaging/invalid-argument' ||
+              (pushErr.message && (
+                pushErr.message.includes('not-registered') ||
+                pushErr.message.includes('not found') ||
+                pushErr.message.includes('INVALID_ARGUMENT') ||
+                pushErr.message.includes('UNREGISTERED') ||
+                pushErr.message.includes('not a valid FCM') ||
+                pushErr.message.includes('invalid')
+              ))
+            );
+
+            if (isInvalidToken) {
+              fcmError = 'FCM token invalid or unregistered (automatically deactivated)';
+              await User.findByIdAndUpdate(userId, { fcmToken: null }).catch(() => {});
             }
           }
         }
