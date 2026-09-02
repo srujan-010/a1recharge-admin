@@ -51,6 +51,8 @@ const getGlobalTransactions = async (req, res, next) => {
     if (service) {
       if (service === 'recharge') {
         query.service = { $in: ['mobile_recharge', 'dth', 'mobile', 'recharge'] };
+      } else if (['wallet_topup', 'topup', 'add_money', 'wallet_credit'].includes(service.toLowerCase())) {
+        query.service = { $in: ['wallet_topup', 'topup', 'ADD_MONEY', 'WALLET_TOPUP'] };
       } else {
         query.service = { $regex: new RegExp(`^${service}$`, 'i') };
       }

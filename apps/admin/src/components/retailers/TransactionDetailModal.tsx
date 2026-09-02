@@ -25,7 +25,9 @@ export function TransactionDetailModal({
   if (!transaction) return null;
 
   const normStatus = (transaction.status || '').toUpperCase();
-  const amount = transaction.amountPaise ? (transaction.amountPaise / 100) : (transaction.amount || 0);
+  const amount = transaction.amountPaise !== undefined && transaction.amountPaise !== null
+    ? transaction.amountPaise / 100
+    : Number(transaction.amount || 0);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -53,7 +55,7 @@ export function TransactionDetailModal({
             <div>
               <p className="text-xs text-slate-500 font-medium">Recharge Amount</p>
               <p className="text-2xl font-black font-mono text-slate-900 dark:text-white flex items-center">
-                ₹{amount.toFixed(2)}
+                ₹{(Number(amount) || 0).toFixed(2)}
               </p>
             </div>
             <div className="text-right">
@@ -96,19 +98,19 @@ export function TransactionDetailModal({
               <div>
                 <span className="text-slate-500 block">Provider Comm.</span>
                 <span className="font-mono font-bold text-indigo-600">
-                  ₹{(transaction.providerCommissionAmount || 0).toFixed(2)}
+                  ₹{(Number(transaction.providerCommissionAmount) || 0).toFixed(2)}
                 </span>
               </div>
               <div>
                 <span className="text-slate-500 block">Retailer Comm.</span>
                 <span className="font-mono font-bold text-rose-500">
-                  ₹{(transaction.retailerCommissionAmount ?? (transaction.commissionEarnedPaise ? transaction.commissionEarnedPaise / 100 : 0)).toFixed(2)}
+                  ₹{(Number(transaction.retailerCommissionAmount) || Number(transaction.commissionEarnedPaise ? transaction.commissionEarnedPaise / 100 : 0) || 0).toFixed(2)}
                 </span>
               </div>
               <div>
                 <span className="text-slate-500 block">Net Company Profit</span>
                 <span className="font-mono font-bold text-emerald-600">
-                  ₹{(transaction.companyProfitAmount || 0).toFixed(2)}
+                  ₹{(Number(transaction.companyProfitAmount) || 0).toFixed(2)}
                 </span>
               </div>
             </div>

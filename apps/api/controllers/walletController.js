@@ -73,22 +73,28 @@ const getStatement = async (req, res, next) => {
       .skip(Number(skip))
       .limit(Number(limit));
 
+    const { normalizePaymentType } = require('../utils/paymentHelper');
+
     res.status(200).json({
       success: true,
       data: transactions.map(t => ({
         id: t._id,
         serviceType: t.service,
-        operatorName: t.operatorName || '',
+        operatorName: t.operatorName || (t.service === 'wallet_topup' ? 'Wallet Top-up' : ''),
         transactionTitle: getTransactionTitle(t.service, t.operatorName),
         customerIdentifier: t.mobileNumber || t.recipientName || '',
         amount: t.amountPaise,
         commission: t.commissionEarnedPaise || 0,
         status: t.status,
+        type: t.type,
+        closingBalancePaise: t.closingBalancePaise,
         createdAt: t.createdAt.toISOString(),
         completedAt: (t.updatedAt || t.createdAt).toISOString(),
-        paymentMethod: t.paymentMethod || 'wallet',
+        paymentMethod: normalizePaymentType(t),
+        paymentStatus: t.paymentStatus || (t.service === 'wallet_topup' ? 'RAZORPAY_UPI' : null),
         referenceNumber: t.referenceId,
-        apiReference: t.apiReference || ''
+        apiReference: t.apiReference || '',
+        upiDetails: t.upiDetails || undefined
       }))
     });
   } catch (error) {
@@ -101,61 +107,46 @@ const getStatement = async (req, res, next) => {
 // @access  Private
 const topupWallet = async (req, res, next) => {
   try {
-    const { amountPaise } = req.body;
+    const walletService = require('../services/wallet/wallet.service');
+
+    let amountPaise = req.body.amountPaise;
+    if (!amountPaise && req.body.amount) {
+      amountPaise = Math.round(Number(req.body.amount) * 100);
+    }
     
     if (!amountPaise || amountPaise <= 0) {
       res.status(400);
       throw new Error('Please include a valid amount in paise');
     }
 
-    let wallet = await Wallet.findOne({ userId: req.user._id });
-    if (!wallet) {
-      wallet = await Wallet.create({
-        userId: req.user._id,
-        balancePaise: 0
-      });
-    }
-
-    wallet.balancePaise += Number(amountPaise);
-    await wallet.save();
-
-    const { normalizePaymentType } = require('../utils/paymentHelper');
-    const paymentMethodInput = req.body.paymentMethod || req.body.paymentMode || 'UPI';
-    const normalizedPaymentMethod = normalizePaymentType(paymentMethodInput);
-
-    // Create a transaction record
-    const transaction = await Transaction.create({
+    const referenceId = req.body.referenceId || req.body.orderId || req.body.razorpayPaymentId || req.body.paymentId;
+    const paymentMethod = req.body.paymentMethod || req.body.paymentMode || 'UPI';
+    const paymentStatus = req.body.paymentStatus || 'RAZORPAY_UPI';
+    
+    const result = await walletService.processSuccessfulWalletTopup({
       userId: req.user._id,
-      type: 'credit',
       amountPaise: Number(amountPaise),
-      status: 'success',
-      service: 'wallet_topup',
-      referenceId: req.body.referenceId || req.body.orderId || `TXN${Math.floor(Math.random() * 9000000) + 1000000}`,
-      description: `Wallet top-up via ${normalizedPaymentMethod}`,
-      closingBalancePaise: wallet.balancePaise,
-      paymentMethod: normalizedPaymentMethod,
-      upiDetails: normalizedPaymentMethod === 'UPI' ? {
+      referenceId,
+      paymentMethod,
+      paymentStatus,
+      description: req.body.description,
+      upiDetails: {
         utr: req.body.utr || req.body.upiTransactionId || null,
-        gateway: req.body.gateway || 'UPI Gateway',
-        gatewayOrderId: req.body.gatewayOrderId || null,
-        gatewayPaymentId: req.body.gatewayPaymentId || null,
-      } : undefined
+        gateway: req.body.gateway || 'Razorpay UPI',
+        gatewayOrderId: req.body.gatewayOrderId || req.body.razorpayOrderId || null,
+        gatewayPaymentId: req.body.gatewayPaymentId || req.body.razorpayPaymentId || null,
+      },
+      isTest: req.body.isTest || false
     });
 
-    await Notification.create({
-      userId: req.user._id,
-      title: 'Wallet Credited',
-      message: `₹${(amountPaise / 100).toFixed(2)} has been added to your wallet.`,
-      category: 'SUCCESS',
-      priority: 'NORMAL',
-      action: 'ROUTE_WALLET'
-    });
+    const transaction = result.transaction;
 
     res.status(200).json({
       success: true,
-      message: 'Wallet top-up successful',
+      message: result.message || 'Wallet top-up successful',
       data: {
-        balancePaise: wallet.balancePaise,
+        balancePaise: result.walletBalancePaise,
+        alreadyProcessed: result.alreadyProcessed || false,
         transaction: {
           id: transaction._id,
           type: transaction.type,
@@ -165,6 +156,8 @@ const topupWallet = async (req, res, next) => {
           referenceId: transaction.referenceId,
           description: transaction.description,
           closingBalancePaise: transaction.closingBalancePaise,
+          paymentMethod: transaction.paymentMethod,
+          paymentStatus: transaction.paymentStatus,
           timestamp: transaction.createdAt
         }
       }

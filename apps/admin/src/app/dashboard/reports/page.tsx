@@ -728,13 +728,13 @@ export default function ReportsPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs font-semibold text-purple-600 dark:text-purple-400">
-                        ₹{op.providerCommission.toFixed(2)}
+                        ₹{(Number(op.providerCommission) || 0).toFixed(2)}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs font-semibold text-amber-600 dark:text-amber-400">
-                        ₹{op.retailerCommission.toFixed(2)}
+                        ₹{(Number(op.retailerCommission) || 0).toFixed(2)}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                        ₹{op.companyProfit.toFixed(2)}
+                        ₹{(Number(op.companyProfit) || 0).toFixed(2)}
                       </TableCell>
                     </TableRow>
                   ))

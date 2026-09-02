@@ -22,11 +22,11 @@ const walletLedgerSchema = new mongoose.Schema(
     },
     referenceType: {
       type: String,
-      enum: ['RECHARGE', 'COMMISSION', 'REFUND', 'ADD_MONEY', 'MANUAL', 'HOLD_RELEASE'],
+      enum: ['RECHARGE', 'COMMISSION', 'REFUND', 'ADD_MONEY', 'MANUAL', 'HOLD_RELEASE', 'ADMIN_CREDIT', 'RAZORPAY_WALLET_CREDIT'],
       required: true,
     },
     referenceId: {
-      type: mongoose.Schema.Types.ObjectId, // Could be RechargeTransaction ID
+      type: mongoose.Schema.Types.Mixed, // Could be ObjectId, RechargeTransaction ID, or Razorpay/Order string ID
       required: true,
     },
     description: {

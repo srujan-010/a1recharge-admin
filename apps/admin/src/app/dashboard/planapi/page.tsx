@@ -118,9 +118,9 @@ export default function PlanApiManagementCenter() {
     const headers = ["Synced Time", "Wallet Balance (₹)", "Remaining Hits", "Response Time (ms)", "Status", "Triggered By", "Error Message"];
     const rows = logsData.data.map((log) => [
       format(new Date(log.syncedAt), 'yyyy-MM-dd HH:mm:ss'),
-      log.balance.toFixed(2),
-      log.remainingHits,
-      log.responseTime,
+      (Number(log.balance) || 0).toFixed(2),
+      Number(log.remainingHits) || 0,
+      Number(log.responseTime) || 0,
       log.status,
       log.triggeredBy,
       log.errorMessage ? `"${log.errorMessage.replace(/"/g, '""')}"` : ''
@@ -245,7 +245,7 @@ export default function PlanApiManagementCenter() {
 
           <div className="space-y-1">
             <div className="text-3xl font-black text-slate-900 dark:text-white font-mono tracking-tight">
-              ₹{balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              ₹{(Number(balance) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <div className="flex items-center gap-2 pt-1">
               <Badge className={`text-[10px] font-bold ${balanceStatusPill.color}`}>
@@ -273,7 +273,7 @@ export default function PlanApiManagementCenter() {
 
           <div className="space-y-2">
             <div className="text-3xl font-black text-slate-900 dark:text-white font-mono tracking-tight">
-              {remainingHits.toLocaleString('en-IN')}
+              {(Number(remainingHits) || 0).toLocaleString('en-IN')}
             </div>
             
             {/* Progress Bar */}
@@ -500,7 +500,7 @@ export default function PlanApiManagementCenter() {
                     <YAxis stroke="#94a3b8" fontSize={10} domain={['auto', 'auto']} />
                     <Tooltip 
                       labelFormatter={(val: any) => val ? format(new Date(val), 'MMM dd, HH:mm') : ''}
-                      formatter={(val: any) => [Number(val).toLocaleString(), 'Remaining Hits']}
+                      formatter={(val: any) => [(Number(val) || 0).toLocaleString(), 'Remaining Hits']}
                     />
                     <Area type="monotone" dataKey="remainingHits" stroke="#9333ea" strokeWidth={2} fillOpacity={1} fill="url(#hitsGrad)" />
                   </AreaChart>
@@ -602,10 +602,10 @@ export default function PlanApiManagementCenter() {
                         {format(new Date(log.syncedAt), 'MMM dd, yyyy HH:mm:ss')}
                       </td>
                       <td className="py-3.5 px-3 font-mono font-bold text-slate-900 dark:text-white">
-                        ₹{log.balance.toFixed(2)}
+                        ₹{(Number(log.balance) || 0).toFixed(2)}
                       </td>
                       <td className="py-3.5 px-3 font-mono font-bold text-slate-700 dark:text-slate-300">
-                        {log.remainingHits.toLocaleString()}
+                        {(Number(log.remainingHits) || 0).toLocaleString()}
                       </td>
                       <td className="py-3.5 px-3 font-mono text-slate-500">
                         {log.responseTime} ms

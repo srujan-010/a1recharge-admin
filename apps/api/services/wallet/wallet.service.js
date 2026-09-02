@@ -230,8 +230,14 @@ class WalletService {
     const perform = async (session) => {
       const query = Wallet.findOne({ userId });
       if (session) query.session(session);
-      const wallet = await query;
-      if (!wallet) throw new Error('Wallet not found');
+      let wallet = await query;
+      if (!wallet) {
+        wallet = new Wallet({
+          userId,
+          balancePaise: 0,
+          onHoldPaise: 0
+        });
+      }
 
       wallet.balancePaise += amountPaise;
 
@@ -280,6 +286,171 @@ class WalletService {
     } catch (e) {
       return perform(null);
     }
+  }
+
+  /**
+   * Idempotent process for successful retailer wallet top-up (UPI / Razorpay / Gateway).
+   * Ensures:
+   * 1. Idempotency: Payment ID / Reference ID check. If already processed & successful, returns existing record.
+   * 2. Atomic Wallet Credit: Increases balancePaise (Real wallet credit!), onHoldPaise is UNCHANGED.
+   * 3. Wallet Ledger: Creates CREDIT entry in WalletLedger (referenceType: 'ADD_MONEY').
+   * 4. Global Transaction: Creates/updates Transaction record (service: 'wallet_topup', paymentMethod: 'UPI', paymentStatus: 'RAZORPAY_UPI').
+   */
+  async processSuccessfulWalletTopup({
+    userId,
+    amountPaise,
+    referenceId,
+    paymentMethod = 'UPI',
+    paymentStatus = 'RAZORPAY_UPI',
+    description,
+    upiDetails = {},
+    isTest = false
+  }) {
+    if (!userId) {
+      throw new Error('User ID is required for wallet top-up');
+    }
+
+    const numericAmountPaise = Number(amountPaise);
+    if (!Number.isFinite(numericAmountPaise) || numericAmountPaise <= 0) {
+      throw new Error('Valid positive monetary amount in paise is required');
+    }
+
+    const refId = referenceId || upiDetails.gatewayPaymentId || upiDetails.gatewayOrderId || `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+    const { normalizePaymentType } = require('../../utils/paymentHelper');
+    const Transaction = require('../../models/Transaction');
+    const WalletLedger = require('../../models/WalletLedger');
+    const User = require('../../models/User');
+    const Notification = require('../../models/Notification');
+
+    const canonicalPaymentMethod = normalizePaymentType(paymentMethod) || 'UPI';
+    const canonicalPaymentStatus = paymentStatus || 'RAZORPAY_UPI';
+
+    // 1. IDEMPOTENCY CHECK
+    // Check if a successful top-up transaction already exists for this reference or gateway payment/order ID
+    const searchConditions = [{ referenceId: refId }];
+    if (upiDetails.gatewayPaymentId) {
+      searchConditions.push({ 'upiDetails.gatewayPaymentId': upiDetails.gatewayPaymentId });
+    }
+    if (upiDetails.gatewayOrderId) {
+      searchConditions.push({ 'upiDetails.gatewayOrderId': upiDetails.gatewayOrderId });
+    }
+
+    const existingTxn = await Transaction.findOne({
+      userId,
+      service: 'wallet_topup',
+      $or: searchConditions
+    });
+
+    if (existingTxn && existingTxn.status === 'success') {
+      const currentWallet = await Wallet.findOne({ userId });
+      return {
+        alreadyProcessed: true,
+        success: true,
+        message: 'Wallet top-up already processed',
+        walletBalancePaise: currentWallet ? currentWallet.balancePaise : existingTxn.closingBalancePaise,
+        transaction: existingTxn
+      };
+    }
+
+    const topupDescription = description || `Wallet Top-up via ${canonicalPaymentMethod}`;
+    const amountRupees = numericAmountPaise / 100;
+
+    // Check if WalletLedger already exists (i.e. wallet balance was credited, but Transaction record was missing)
+    const ledgerSearch = [{ referenceId: refId }];
+    if (upiDetails.gatewayOrderId) ledgerSearch.push({ referenceId: upiDetails.gatewayOrderId });
+    if (upiDetails.gatewayPaymentId) ledgerSearch.push({ referenceId: upiDetails.gatewayPaymentId });
+
+    const existingLedger = await WalletLedger.findOne({
+      userId,
+      referenceType: { $in: ['ADD_MONEY', 'RAZORPAY_WALLET_CREDIT', 'MANUAL'] },
+      $or: ledgerSearch
+    });
+
+    let walletResult;
+    if (existingLedger) {
+      // Wallet was ALREADY credited! Do NOT credit again!
+      console.log(`[WALLET SERVICE] Ledger entry already exists for ${refId}. Skipping duplicate wallet balance increment.`);
+      const currentWallet = await Wallet.findOne({ userId });
+      const ledgerBalanceAfterPaise = existingLedger.balanceAfterPaise || (existingLedger.balanceAfter ? Math.round(existingLedger.balanceAfter * 100) : (currentWallet ? currentWallet.balancePaise : 0));
+      walletResult = {
+        wallet: currentWallet,
+        walletBalancePaise: currentWallet ? currentWallet.balancePaise : ledgerBalanceAfterPaise,
+        ledger: existingLedger
+      };
+    } else {
+      // 2. ATOMIC WALLET BALANCE UPDATE & WALLET LEDGER ENTRY
+      walletResult = await this.addBalance(userId, amountRupees, {
+        referenceType: 'ADD_MONEY',
+        referenceId: refId,
+        description: topupDescription,
+      });
+    }
+
+    const user = await User.findById(userId).select('accountType').lean();
+    const rawAcc = (user && user.accountType) ? user.accountType.toUpperCase() : 'BUSINESS';
+    const userAccountType = ['PERSONAL', 'BUSINESS'].includes(rawAcc) ? rawAcc : 'BUSINESS';
+
+    let transactionDoc;
+    if (existingTxn) {
+      existingTxn.status = 'success';
+      existingTxn.amountPaise = numericAmountPaise;
+      existingTxn.closingBalancePaise = walletResult.walletBalancePaise;
+      existingTxn.paymentMethod = canonicalPaymentMethod;
+      existingTxn.paymentStatus = canonicalPaymentStatus;
+      existingTxn.description = topupDescription;
+      existingTxn.upiDetails = {
+        utr: upiDetails.utr || upiDetails.upiTransactionId || existingTxn.upiDetails?.utr || null,
+        gateway: upiDetails.gateway || existingTxn.upiDetails?.gateway || 'Razorpay UPI',
+        gatewayOrderId: upiDetails.gatewayOrderId || existingTxn.upiDetails?.gatewayOrderId || null,
+        gatewayPaymentId: upiDetails.gatewayPaymentId || existingTxn.upiDetails?.gatewayPaymentId || null,
+      };
+      existingTxn.isTest = isTest || false;
+      transactionDoc = await existingTxn.save();
+    } else {
+      transactionDoc = await Transaction.create({
+        userId,
+        accountType: userAccountType,
+        type: 'credit',
+        amountPaise: numericAmountPaise,
+        status: 'success',
+        service: 'wallet_topup',
+        referenceId: refId,
+        description: topupDescription,
+        closingBalancePaise: walletResult.walletBalancePaise,
+        paymentMethod: canonicalPaymentMethod,
+        paymentStatus: canonicalPaymentStatus,
+        upiDetails: {
+          utr: upiDetails.utr || upiDetails.upiTransactionId || null,
+          gateway: upiDetails.gateway || 'Razorpay UPI',
+          gatewayOrderId: upiDetails.gatewayOrderId || null,
+          gatewayPaymentId: upiDetails.gatewayPaymentId || null,
+        },
+        isTest: isTest || false
+      });
+    }
+
+    // 4. NOTIFICATION
+    try {
+      await Notification.create({
+        userId,
+        title: 'Wallet Credited 💳',
+        message: `₹${amountRupees.toFixed(2)} has been added to your wallet via ${canonicalPaymentMethod}. New Balance: ₹${(walletResult.walletBalancePaise / 100).toFixed(2)}.`,
+        category: 'SUCCESS',
+        priority: 'NORMAL',
+        action: 'ROUTE_WALLET'
+      });
+    } catch (notifErr) {
+      console.warn('[WalletService] Notification creation non-critical error:', notifErr.message);
+    }
+
+    return {
+      alreadyProcessed: false,
+      success: true,
+      message: 'Wallet top-up processed successfully',
+      walletBalancePaise: walletResult.walletBalancePaise,
+      transaction: transactionDoc
+    };
   }
 
   /**
@@ -346,6 +517,206 @@ class WalletService {
       return perform(null);
     }
   }
+
+  /**
+   * Records a failed wallet top-up attempt in Transaction history.
+   * DOES NOT modify wallet balance or create a ledger credit.
+   */
+  async processFailedWalletTopup({
+    userId,
+    amountPaise,
+    referenceId,
+    paymentMethod = 'UPI',
+    paymentStatus = 'FAILED',
+    failureReason = 'Payment failed or cancelled',
+    description,
+    upiDetails = {},
+  }) {
+    const { normalizePaymentType } = require('../../utils/paymentHelper');
+    const Transaction = require('../../models/Transaction');
+    const User = require('../../models/User');
+
+    const canonicalPaymentMethod = normalizePaymentType(paymentMethod) || 'UPI';
+    const refId = referenceId || upiDetails.gatewayPaymentId || upiDetails.gatewayOrderId || `TXN_FAIL_${Date.now()}`;
+
+    const currentWallet = await Wallet.findOne({ userId });
+    const user = await User.findById(userId).select('accountType').lean();
+    const rawAcc = (user && user.accountType) ? user.accountType.toUpperCase() : 'BUSINESS';
+    const userAccountType = ['PERSONAL', 'BUSINESS'].includes(rawAcc) ? rawAcc : 'BUSINESS';
+
+    let existingTxn = await Transaction.findOne({
+      userId,
+      service: 'wallet_topup',
+      referenceId: refId
+    });
+
+    if (existingTxn) {
+      existingTxn.status = 'failed';
+      existingTxn.failureReason = failureReason;
+      existingTxn.paymentStatus = paymentStatus;
+      await existingTxn.save();
+      return { success: true, transaction: existingTxn };
+    }
+
+    const newTxn = await Transaction.create({
+      userId,
+      accountType: userAccountType,
+      type: 'credit',
+      amountPaise: Number(amountPaise || 0),
+      status: 'failed',
+      failureReason,
+      service: 'wallet_topup',
+      referenceId: refId,
+      description: description || `Failed Wallet Top-up via ${canonicalPaymentMethod}`,
+      closingBalancePaise: currentWallet ? currentWallet.balancePaise : 0,
+      paymentMethod: canonicalPaymentMethod,
+      paymentStatus,
+      upiDetails: {
+        utr: upiDetails.utr || null,
+        gateway: upiDetails.gateway || 'Razorpay UPI',
+        gatewayOrderId: upiDetails.gatewayOrderId || null,
+        gatewayPaymentId: upiDetails.gatewayPaymentId || null,
+      }
+    });
+
+    return { success: true, transaction: newTxn };
+  }
+
+  /**
+   * Records a pending wallet top-up order in Transaction history.
+   * DOES NOT modify wallet balance or create a ledger credit.
+   */
+  async processPendingWalletTopup({
+    userId,
+    amountPaise,
+    referenceId,
+    paymentMethod = 'UPI',
+    paymentStatus = 'PENDING',
+    description,
+    upiDetails = {},
+  }) {
+    const { normalizePaymentType } = require('../../utils/paymentHelper');
+    const Transaction = require('../../models/Transaction');
+    const User = require('../../models/User');
+
+    const canonicalPaymentMethod = normalizePaymentType(paymentMethod) || 'UPI';
+    const refId = referenceId || upiDetails.gatewayOrderId || `TXN_PEND_${Date.now()}`;
+
+    const currentWallet = await Wallet.findOne({ userId });
+    const user = await User.findById(userId).select('accountType').lean();
+    const rawAcc = (user && user.accountType) ? user.accountType.toUpperCase() : 'BUSINESS';
+    const userAccountType = ['PERSONAL', 'BUSINESS'].includes(rawAcc) ? rawAcc : 'BUSINESS';
+
+    let existingTxn = await Transaction.findOne({
+      userId,
+      service: 'wallet_topup',
+      referenceId: refId
+    });
+
+    if (existingTxn) {
+      return { success: true, transaction: existingTxn };
+    }
+
+    const newTxn = await Transaction.create({
+      userId,
+      accountType: userAccountType,
+      type: 'credit',
+      amountPaise: Number(amountPaise || 0),
+      status: 'pending',
+      service: 'wallet_topup',
+      referenceId: refId,
+      description: description || `Pending Wallet Top-up Order`,
+      closingBalancePaise: currentWallet ? currentWallet.balancePaise : 0,
+      paymentMethod: canonicalPaymentMethod,
+      paymentStatus,
+      upiDetails: {
+        utr: upiDetails.utr || null,
+        gateway: upiDetails.gateway || 'Razorpay UPI',
+        gatewayOrderId: upiDetails.gatewayOrderId || null,
+        gatewayPaymentId: upiDetails.gatewayPaymentId || null,
+      }
+    });
+
+    return { success: true, transaction: newTxn };
+  }
+
+  /**
+   * Process Admin Manual Credit or Debit atomically with proper ledger and transaction records.
+   */
+  async processManualAdjustment({
+    userId,
+    adminId,
+    type = 'CREDIT', // 'CREDIT' or 'DEBIT'
+    amountPaise,
+    remark,
+    description
+  }) {
+    const numericPaise = Number(amountPaise);
+    if (!Number.isFinite(numericPaise) || numericPaise <= 0) {
+      throw new Error('Valid positive amountPaise is required for manual adjustment');
+    }
+    const amountRupees = numericPaise / 100;
+    const isCredit = type.toUpperCase() === 'CREDIT';
+    const refId = `MANUAL_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    const Transaction = require('../../models/Transaction');
+    const User = require('../../models/User');
+
+    let wallet = await Wallet.findOne({ userId });
+    if (!wallet) {
+      wallet = new Wallet({ userId, balancePaise: 0, onHoldPaise: 0 });
+    }
+
+    if (isCredit) {
+      wallet.balancePaise += numericPaise;
+    } else {
+      if (wallet.balancePaise < numericPaise) {
+        throw new Error(`Insufficient wallet balance for manual debit. Current: ₹${(wallet.balancePaise/100).toFixed(2)}, Requested Debit: ₹${amountRupees.toFixed(2)}`);
+      }
+      wallet.balancePaise -= numericPaise;
+    }
+
+    this.validateWalletInvariants(wallet);
+    await wallet.save();
+
+    const ledger = await WalletLedger.create({
+      userId,
+      adminId: adminId || null,
+      transactionType: isCredit ? 'CREDIT' : 'DEBIT',
+      amount: amountRupees,
+      balanceAfter: Number((wallet.balancePaise / 100).toFixed(2)),
+      referenceType: 'MANUAL',
+      referenceId: refId,
+      remark: remark || (isCredit ? 'ADMIN_MANUAL_CREDIT' : 'ADMIN_MANUAL_DEBIT'),
+      description: description || `Manual ${isCredit ? 'Credit' : 'Debit'} by Admin`
+    });
+
+    const user = await User.findById(userId).select('accountType').lean();
+    const rawAcc = (user && user.accountType) ? user.accountType.toUpperCase() : 'BUSINESS';
+    const userAccountType = ['PERSONAL', 'BUSINESS'].includes(rawAcc) ? rawAcc : 'BUSINESS';
+
+    const txn = await Transaction.create({
+      userId,
+      accountType: userAccountType,
+      type: isCredit ? 'credit' : 'debit',
+      amountPaise: numericPaise,
+      status: 'success',
+      service: isCredit ? 'manual_credit' : 'manual_debit',
+      referenceId: refId,
+      description: description || `Manual ${isCredit ? 'Credit' : 'Debit'} by Admin`,
+      closingBalancePaise: wallet.balancePaise,
+      paymentMethod: isCredit ? 'ADMIN_CREDIT' : 'ADMIN_DEBIT',
+      paymentStatus: 'SUCCESS'
+    });
+
+    return {
+      success: true,
+      walletBalancePaise: wallet.balancePaise,
+      ledger,
+      transaction: txn
+    };
+  }
 }
 
 module.exports = new WalletService();
+

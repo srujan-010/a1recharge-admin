@@ -163,13 +163,17 @@ const getRetailerById = async (req, res, next) => {
 
     // Parallel fetch related data
     const [
-      wallet, kyc, bank, recentRawTxns, lastLogins,
+      wallet, kyc, bank, recentRawTxns, walletTopups, lastLogins,
       txnStats, commissionStats, ledgerStats
     ] = await Promise.all([
       Wallet.findOne({ userId: retailer._id }).lean(),
       Kyc.findOne({ userId: retailer._id }).lean(),
       Bank.findOne({ userId: retailer._id }).lean(),
       RechargeTransaction.find({ userId: retailer._id, isTest: { $ne: true }, orderId: { $not: /^TEST/i } })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean(),
+      Transaction.find({ userId: retailer._id, service: 'wallet_topup', isTest: { $ne: true } })
         .sort({ createdAt: -1 })
         .limit(50)
         .lean(),
@@ -243,7 +247,7 @@ const getRetailerById = async (req, res, next) => {
       commMap[c.transactionId.toString()] = c;
     });
 
-    const recentTxns = recentRawTxns.map(t => {
+    const formattedRecharges = recentRawTxns.map(t => {
       const c = commMap[t._id.toString()] || {};
       return {
         ...t,
@@ -256,6 +260,32 @@ const getRetailerById = async (req, res, next) => {
         commissionEarnedPaise: (c.retailerCommissionAmount || 0) * 100,
       };
     });
+
+    const formattedTopups = walletTopups.map(t => ({
+      _id: t._id,
+      orderId: t.referenceId,
+      referenceId: t.referenceId,
+      amount: t.amountPaise / 100,
+      amountPaise: t.amountPaise,
+      status: (t.status || 'SUCCESS').toUpperCase(),
+      service: 'wallet_topup',
+      serviceType: 'wallet_topup',
+      operatorName: 'Wallet Top-up',
+      internalOperatorName: 'Wallet Top-up',
+      paymentMethod: t.paymentMethod || 'UPI',
+      paymentStatus: t.paymentStatus || 'RAZORPAY_UPI',
+      retailerCommissionAmount: 0,
+      providerCommissionAmount: 0,
+      companyProfitAmount: 0,
+      commissionEarnedPaise: 0,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt || t.createdAt,
+      upiDetails: t.upiDetails
+    }));
+
+    const recentTxns = [...formattedRecharges, ...formattedTopups]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 50);
 
     const tx = txnStats[0] || {};
     const comm = commissionStats[0] || {};

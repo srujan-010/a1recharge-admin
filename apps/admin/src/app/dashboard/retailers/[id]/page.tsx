@@ -544,9 +544,11 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
                   {filteredTransactions.slice(0, 5).map((txn: any) => {
                     const normStatus = (txn.status || '').toUpperCase();
-                    const txnAmount = txn.amountPaise ? (txn.amountPaise / 100) : (txn.amount || 0);
-                    const retComm = txn.retailerCommissionAmount ?? (txn.commissionEarnedPaise ? txn.commissionEarnedPaise / 100 : 0);
-                    const companyProfit = txn.companyProfitAmount || 0;
+                    const txnAmount = txn.amountPaise !== undefined && txn.amountPaise !== null
+                      ? txn.amountPaise / 100
+                      : Number(txn.amount || 0);
+                    const retComm = Number(txn.retailerCommissionAmount ?? (txn.commissionEarnedPaise ? txn.commissionEarnedPaise / 100 : 0)) || 0;
+                    const companyProfit = Number(txn.companyProfitAmount || 0);
 
                     return (
                       <tr 
@@ -568,7 +570,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                           </div>
                         </td>
                         <td className="py-3 text-right font-mono font-bold text-slate-900 dark:text-white">
-                          ₹{txnAmount.toFixed(2)}
+                          ₹{(Number(txnAmount) || 0).toFixed(2)}
                         </td>
                         <td className="py-3 text-center">
                           <Badge 
@@ -579,8 +581,8 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                           </Badge>
                         </td>
                         <td className="py-3 text-right">
-                          <div className="text-[11px] text-slate-500 font-mono">Ret: ₹{retComm.toFixed(2)}</div>
-                          <div className="font-mono text-xs font-bold text-emerald-600">Profit: ₹{companyProfit.toFixed(2)}</div>
+                          <div className="text-[11px] text-slate-500 font-mono">Ret: ₹{(Number(retComm) || 0).toFixed(2)}</div>
+                          <div className="font-mono text-xs font-bold text-emerald-600">Profit: ₹{(Number(companyProfit) || 0).toFixed(2)}</div>
                         </td>
                         <td className="py-3 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
