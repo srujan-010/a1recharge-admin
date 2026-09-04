@@ -22,7 +22,10 @@ const transactionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['success', 'pending', 'failed', 'reversed', 'refunded', 'cancelled', 'timeout'],
+    enum: [
+      'success', 'pending', 'failed', 'reversed', 'refunded', 'cancelled', 'timeout', 'held', 'released', 'initiated', 'processing',
+      'SUCCESS', 'PENDING', 'FAILED', 'REVERSED', 'REFUNDED', 'CANCELLED', 'TIMEOUT', 'HELD', 'RELEASED', 'INITIATED', 'PROCESSING'
+    ],
     required: true,
   },
   failureReason: {
@@ -71,6 +74,31 @@ const transactionSchema = new mongoose.Schema({
     gatewayOrderId: { type: String, default: null },
     gatewayPaymentId: { type: String, default: null },
   },
+  adminId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AdminUser',
+    default: null,
+  },
+  adminName: {
+    type: String,
+    default: null,
+  },
+  reason: {
+    type: String,
+    default: null,
+  },
+  source: {
+    type: String,
+    default: 'SYSTEM',
+  },
+  performedBy: {
+    type: String,
+    default: null,
+  },
+  transactionType: {
+    type: String,
+    default: null,
+  },
   isTest: {
     type: Boolean,
     default: false,
@@ -81,6 +109,9 @@ const transactionSchema = new mongoose.Schema({
 
 transactionSchema.index({ userId: 1, createdAt: -1 });
 transactionSchema.index({ service: 1, status: 1, createdAt: -1 });
+transactionSchema.index({ transactionType: 1, createdAt: -1 });
+transactionSchema.index({ adminId: 1, createdAt: -1 });
+transactionSchema.index({ source: 1 });
 transactionSchema.index({ 'upiDetails.gatewayOrderId': 1 });
 transactionSchema.index({ 'upiDetails.gatewayPaymentId': 1 });
 

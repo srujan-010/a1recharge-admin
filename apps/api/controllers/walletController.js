@@ -65,37 +65,45 @@ const getBalance = async (req, res, next) => {
 // @access  Private
 const getStatement = async (req, res, next) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
-    const skip = (page - 1) * limit;
+    const { page = 1, limit = 20, type, status, search } = req.query;
+    const unifiedTransactionService = require('../services/transaction/unifiedTransaction.service');
 
-    const transactions = await Transaction.find({ userId: req.user._id })
-      .sort({ createdAt: -1 })
-      .skip(Number(skip))
-      .limit(Number(limit));
-
-    const { normalizePaymentType } = require('../utils/paymentHelper');
+    const result = await unifiedTransactionService.getUnifiedGlobalTransactions({
+      userId: req.user._id,
+      page: parseInt(page, 10) || 1,
+      limit: parseInt(limit, 10) || 20,
+      transactionType: type || 'all',
+      status: status || 'all',
+      search: search || ''
+    });
 
     res.status(200).json({
       success: true,
-      data: transactions.map(t => ({
+      data: result.data.map(t => ({
         id: t._id,
         serviceType: t.service,
-        operatorName: t.operatorName || (t.service === 'wallet_topup' ? 'Wallet Top-up' : ''),
-        transactionTitle: getTransactionTitle(t.service, t.operatorName),
-        customerIdentifier: t.mobileNumber || t.recipientName || '',
+        transactionType: t.transactionType,
+        operatorName: t.operatorName || (t.service === 'wallet_topup' ? 'Wallet Top-up' : (t.source === 'ADMIN' ? 'Admin' : '')),
+        transactionTitle: t.serviceTitle || getTransactionTitle(t.service, t.operatorName),
+        customerIdentifier: t.targetIdentifier || t.mobileNumber || '',
         amount: t.amountPaise,
         commission: t.commissionEarnedPaise || 0,
         status: t.status,
         type: t.type,
         closingBalancePaise: t.closingBalancePaise,
-        createdAt: t.createdAt.toISOString(),
-        completedAt: (t.updatedAt || t.createdAt).toISOString(),
-        paymentMethod: normalizePaymentType(t),
-        paymentStatus: t.paymentStatus || (t.service === 'wallet_topup' ? 'RAZORPAY_UPI' : null),
+        createdAt: typeof t.createdAt === 'string' ? t.createdAt : (t.createdAt?.toISOString?.() || new Date(t.createdAt).toISOString()),
+        completedAt: typeof t.createdAt === 'string' ? t.createdAt : (t.createdAt?.toISOString?.() || new Date(t.createdAt).toISOString()),
+        paymentMethod: t.paymentMethod,
+        paymentStatus: t.status,
+        source: t.source,
+        performedBy: t.performedBy,
+        reason: t.reason,
         referenceNumber: t.referenceId,
+        referenceId: t.referenceId,
         apiReference: t.apiReference || '',
         upiDetails: t.upiDetails || undefined
-      }))
+      })),
+      pagination: result.pagination
     });
   } catch (error) {
     next(error);

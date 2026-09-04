@@ -1,4 +1,6 @@
 const WalletLedger = require('../../models/WalletLedger');
+const Wallet = require('../../models/Wallet');
+const Transaction = require('../../models/Transaction');
 const User = require('../../models/User');
 const walletService = require('../../services/wallet/wallet.service');
 const NotificationService = require('../../services/notification.service');
@@ -82,12 +84,14 @@ const manualCreditDebit = async (req, res, next) => {
     const { type, amountPaise, reason } = req.body;
     const { userId } = req.params;
 
-    if (!['credit', 'debit'].includes(type)) {
+    const normType = String(type || '').toLowerCase();
+    if (!['credit', 'debit'].includes(normType)) {
       res.status(400);
       throw new Error('Invalid adjustment type. Must be credit or debit.');
     }
 
-    if (!amountPaise || amountPaise <= 0) {
+    const parsedPaise = Math.round(Number(amountPaise));
+    if (!Number.isFinite(parsedPaise) || parsedPaise <= 0) {
       res.status(400);
       throw new Error('Amount must be greater than 0 paise.');
     }
@@ -103,53 +107,144 @@ const manualCreditDebit = async (req, res, next) => {
       throw new Error('Retailer not found');
     }
 
-    const amountRupees = amountPaise / 100;
+    const adminUser = req.admin;
+    const adminName = adminUser?.name || 'System Admin';
+    const adminId = adminUser?._id || null;
+    const isCredit = normType === 'credit';
+    const amountRupees = Number((parsedPaise / 100).toFixed(2));
+    const trimmedReason = reason.trim();
 
-    // Generate a unique reference ID for this manual transaction
-    const refId = new mongoose.Types.ObjectId();
+    // Idempotency: use header key or generate unique reference
+    const idempotencyKey = req.headers['idempotency-key'] || req.body.referenceId;
+    const refId = idempotencyKey ? String(idempotencyKey) : `ADM_${normType.toUpperCase()}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    if (type === 'credit') {
-      const resVal = await walletService.addBalance(userId, amountRupees, {
-        referenceType: 'MANUAL',
-        referenceId: refId,
-        description: `Manual Credit: ${reason}`,
-      });
-      NotificationService.sendWalletCredited({
-        userId,
-        amount: amountRupees,
-        newBalance: resVal && resVal.newBalance ? resVal.newBalance : undefined,
-        reason: `Manual Credit: ${reason}`,
-        referenceId: refId
-      });
-    } else {
-      await walletService.reserveAmount(userId, amountRupees);
-      const resVal = await walletService.commitReservation(userId, amountRupees, {
-        referenceType: 'MANUAL',
-        referenceId: refId,
-        description: `Manual Debit: ${reason}`,
-      });
-      NotificationService.sendWalletDebited({
-        userId,
-        amount: amountRupees,
-        newBalance: resVal && resVal.newBalance ? resVal.newBalance : undefined,
-        reason: `Manual Debit: ${reason}`,
-        referenceId: refId
+    // Check if this referenceId was already processed
+    const existingTxn = await Transaction.findOne({ referenceId: refId });
+    if (existingTxn) {
+      const currentWallet = await Wallet.findOne({ userId });
+      return res.status(200).json({
+        success: true,
+        isDuplicate: true,
+        message: `Adjustment request already processed (idempotent response).`,
+        data: {
+          referenceId: refId,
+          transaction: existingTxn,
+          newBalanceRupees: Number(((currentWallet ? currentWallet.balancePaise : 0) / 100).toFixed(2))
+        }
       });
     }
 
-    // Audit Log this critical action
+    // Atomic Wallet Mutation with balance validation for debits
+    let wallet = await Wallet.findOne({ userId });
+    if (!wallet) {
+      wallet = new Wallet({ userId, balancePaise: 0, onHoldPaise: 0 });
+    }
+
+    const previousBalancePaise = Math.round(wallet.balancePaise || 0);
+
+    if (isCredit) {
+      wallet.balancePaise = previousBalancePaise + parsedPaise;
+    } else {
+      if (previousBalancePaise < parsedPaise) {
+        res.status(400);
+        throw new Error(`Insufficient wallet balance for manual debit. Current: ₹${(previousBalancePaise / 100).toFixed(2)}, Requested Debit: ₹${amountRupees.toFixed(2)}`);
+      }
+      wallet.balancePaise = previousBalancePaise - parsedPaise;
+    }
+
+    await wallet.save();
+
+    const newBalancePaise = Math.round(wallet.balancePaise);
+    const newBalanceRupees = Number((newBalancePaise / 100).toFixed(2));
+    const prevBalanceRupees = Number((previousBalancePaise / 100).toFixed(2));
+    const description = `Manual ${isCredit ? 'Credit' : 'Debit'}: ${trimmedReason}`;
+
+    // 1. Authoritative WalletLedger entry
+    const ledger = await WalletLedger.create({
+      userId,
+      adminId,
+      adminName,
+      transactionType: isCredit ? 'CREDIT' : 'DEBIT',
+      amountPaise: parsedPaise,
+      previousBalancePaise,
+      balanceAfterPaise: newBalancePaise,
+      amount: amountRupees,
+      previousBalance: prevBalanceRupees,
+      balanceAfter: newBalanceRupees,
+      referenceType: isCredit ? 'ADMIN_CREDIT' : 'ADMIN_DEBIT',
+      referenceId: refId,
+      remark: trimmedReason,
+      description
+    });
+
+    // 2. Authoritative Transaction record for Global Transactions & Retailer Statement
+    const rawAcc = retailer.accountType ? retailer.accountType.toUpperCase() : 'BUSINESS';
+    const userAccountType = ['PERSONAL', 'BUSINESS'].includes(rawAcc) ? rawAcc : 'BUSINESS';
+
+    const transaction = await Transaction.create({
+      userId,
+      accountType: userAccountType,
+      type: isCredit ? 'credit' : 'debit',
+      amountPaise: parsedPaise,
+      closingBalancePaise: newBalancePaise,
+      status: 'success',
+      service: isCredit ? 'admin_credit' : 'admin_debit',
+      transactionType: isCredit ? 'ADMIN_CREDIT' : 'ADMIN_DEBIT',
+      paymentMethod: 'ADMIN',
+      paymentStatus: 'SUCCESS',
+      source: 'ADMIN',
+      performedBy: adminName,
+      adminId,
+      adminName,
+      reason: trimmedReason,
+      description,
+      referenceId: refId,
+      isTest: false
+    });
+
+    // 3. Notification to retailer
+    try {
+      if (isCredit) {
+        NotificationService.sendWalletCredited({
+          userId,
+          amount: amountRupees,
+          newBalance: newBalanceRupees,
+          reason: description,
+          referenceId: refId
+        });
+      } else {
+        NotificationService.sendWalletDebited({
+          userId,
+          amount: amountRupees,
+          newBalance: newBalanceRupees,
+          reason: description,
+          referenceId: refId
+        });
+      }
+    } catch (err) {
+      console.error('[WALLET NOTIFICATION ERROR]', err);
+    }
+
+    // 4. Audit Log this critical action
     await logAudit(
       req.admin, 
-      `MANUAL_WALLET_ADJUSTMENT`, 
+      `WALLET_ADJUSTMENT`, 
       'WALLET', 
       null, 
-      { userId, type, amountPaise, reason, referenceId: refId }, 
+      { userId, type: normType, amountPaise: parsedPaise, reason: trimmedReason, referenceId: refId, adminName }, 
       req
     );
 
     res.status(200).json({
       success: true,
-      message: `Successfully applied manual ${type} of ₹${amountRupees.toFixed(2)} to ${retailer.name}.`,
+      message: `Successfully applied manual ${normType} of ₹${amountRupees.toFixed(2)} to ${retailer.name}.`,
+      data: {
+        referenceId: refId,
+        transactionId: transaction._id,
+        ledgerId: ledger._id,
+        newBalanceRupees,
+        newBalancePaise
+      }
     });
   } catch (error) {
     next(error);

@@ -67,6 +67,7 @@ export function useManualAdjustment() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['global-ledger'] });
+      queryClient.invalidateQueries({ queryKey: ['global-transactions'] });
       queryClient.invalidateQueries({ queryKey: ['retailer', variables.userId] });
     },
   });

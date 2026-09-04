@@ -11,19 +11,35 @@ export interface TransactionEntry {
     accountType?: 'PERSONAL' | 'BUSINESS';
   };
   accountType?: 'PERSONAL' | 'BUSINESS';
+  transactionType: string;
   type: 'credit' | 'debit';
   amountPaise: number;
-  status: 'success' | 'pending' | 'failed' | 'reversed';
+  amountRupees?: number;
+  status: string;
   service: string;
+  serviceTitle?: string;
   referenceId: string;
   description: string;
-  closingBalancePaise: number;
+  closingBalancePaise: number | null;
+  closingBalanceRupees?: number | null;
   mobileNumber?: string;
+  targetIdentifier?: string;
   recipientName?: string;
   commissionEarnedPaise: number;
   operatorName?: string;
   apiReference?: string;
   paymentMethod: string;
+  source: string;
+  performedBy?: string;
+  adminName?: string;
+  adminId?: string;
+  reason?: string;
+  upiDetails?: {
+    utr?: string;
+    gateway?: string;
+    gatewayOrderId?: string;
+    gatewayPaymentId?: string;
+  };
   createdAt: string;
 }
 
@@ -38,12 +54,23 @@ export interface TransactionsResponse {
   };
 }
 
-export function useGlobalTransactions(page = 1, limit = 20, search = '', status = 'all', retailerId = '', service = '', showTest = false, accountType = 'all', paymentMethod = 'all') {
+export function useGlobalTransactions(
+  page = 1,
+  limit = 20,
+  search = '',
+  status = 'all',
+  retailerId = '',
+  service = '',
+  transactionType = 'all',
+  showTest = false,
+  accountType = 'all',
+  paymentMethod = 'all'
+) {
   return useQuery({
-    queryKey: ['global-transactions', page, limit, search, status, retailerId, service, showTest, accountType, paymentMethod],
+    queryKey: ['global-transactions', page, limit, search, status, retailerId, service, transactionType, showTest, accountType, paymentMethod],
     queryFn: async () => {
       const { data } = await api.get<TransactionsResponse>('/admin/transactions', {
-        params: { page, limit, search, status, retailer: retailerId, service, showTest, accountType, paymentMethod }
+        params: { page, limit, search, status, retailer: retailerId, service, transactionType, showTest, accountType, paymentMethod }
       });
       return data;
     },

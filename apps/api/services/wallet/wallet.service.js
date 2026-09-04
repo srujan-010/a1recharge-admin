@@ -398,6 +398,8 @@ class WalletService {
       existingTxn.closingBalancePaise = walletResult.walletBalancePaise;
       existingTxn.paymentMethod = canonicalPaymentMethod;
       existingTxn.paymentStatus = canonicalPaymentStatus;
+      existingTxn.source = 'RAZORPAY';
+      existingTxn.transactionType = 'WALLET_TOPUP_UPI';
       existingTxn.description = topupDescription;
       existingTxn.upiDetails = {
         utr: upiDetails.utr || upiDetails.upiTransactionId || existingTxn.upiDetails?.utr || null,
@@ -415,6 +417,8 @@ class WalletService {
         amountPaise: numericAmountPaise,
         status: 'success',
         service: 'wallet_topup',
+        transactionType: 'WALLET_TOPUP_UPI',
+        source: 'RAZORPAY',
         referenceId: refId,
         description: topupDescription,
         closingBalancePaise: walletResult.walletBalancePaise,
