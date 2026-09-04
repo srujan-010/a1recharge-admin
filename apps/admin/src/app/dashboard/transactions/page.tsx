@@ -29,7 +29,6 @@ import {
   Coins,
   Unlock,
   Lock,
-  UserCheck,
   Cpu,
   X
 } from "lucide-react";
@@ -256,22 +255,38 @@ function TransactionsContent() {
         const reason = row.reason;
         const isAdminTx = row.transactionType === 'ADMIN_CREDIT' || row.transactionType === 'ADMIN_DEBIT' || row.source === 'ADMIN';
 
+        // Strip Order ID and related reference patterns from description
+        const rawDesc = row.description || "";
+        const cleanDesc = rawDesc
+          .replace(/\s*[-–—|,;]?\s*\(?Order\s*ID:?\s*[^)\s,]+\)?/gi, "")
+          .replace(/\s*[-–—|,;]?\s*\(?OrderID:?\s*[^)\s,]+\)?/gi, "")
+          .trim();
+
         return (
-          <div className="flex flex-col max-w-xs">
-            <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+          <div className="flex flex-col max-w-[180px]">
+            <span className="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate" title={title}>
               {title}
             </span>
             {row.operatorName && (
-              <span className="text-xs text-muted-foreground">{row.operatorName}</span>
+              <span className="text-xs text-muted-foreground truncate">{row.operatorName}</span>
             )}
-            {isAdminTx && reason && (
-              <span className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50/80 dark:bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-200/60 dark:border-amber-800/40 mt-1 inline-block" title={`Reason: ${reason}`}>
-                <span className="font-semibold">Reason:</span> {reason}
-              </span>
+            {isAdminTx && (
+              <div className="flex flex-col gap-0.5 mt-1">
+                {reason && (
+                  <span className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50/80 dark:bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-200/60 dark:border-amber-800/40 inline-block break-words" title={`Reason: ${reason}`}>
+                    <span className="font-semibold">Reason:</span> {reason}
+                  </span>
+                )}
+                {(row.performedBy || row.adminName) && (
+                  <span className="text-[11px] text-slate-600 dark:text-slate-400 truncate">
+                    By: <span className="font-medium text-slate-800 dark:text-slate-200">{row.performedBy || row.adminName}</span>
+                  </span>
+                )}
+              </div>
             )}
-            {!isAdminTx && row.description && row.description !== title && (
-              <span className="text-[11px] text-muted-foreground truncate" title={row.description}>
-                {row.description}
+            {!isAdminTx && cleanDesc && cleanDesc !== title && (
+              <span className="text-[11px] text-muted-foreground truncate mt-0.5" title={cleanDesc}>
+                {cleanDesc}
               </span>
             )}
           </div>
@@ -400,33 +415,7 @@ function TransactionsContent() {
         );
       },
     },
-    {
-      accessorKey: "source",
-      header: "Source / Admin",
-      cell: (info: any) => {
-        const row = info.row.original;
-        const source = String(info.getValue() || 'SYSTEM').toUpperCase();
-        const performedBy = row.performedBy || row.adminName;
-        const isAdmin = source === 'ADMIN';
 
-        return (
-          <div className="flex flex-col">
-            <span className={`text-xs font-semibold uppercase tracking-wider ${isAdmin ? 'text-amber-600 dark:text-amber-400' : 'text-slate-600 dark:text-slate-400'}`}>
-              {source}
-            </span>
-            {isAdmin && performedBy && (
-              <span className="text-[11px] text-slate-700 dark:text-slate-300 font-medium flex items-center gap-1 mt-0.5" title={`Authenticated Admin: ${performedBy}`}>
-                <UserCheck className="w-3 h-3 text-amber-500 shrink-0" />
-                {performedBy}
-              </span>
-            )}
-            {!isAdmin && performedBy && performedBy !== 'System' && (
-              <span className="text-[11px] text-muted-foreground">{performedBy}</span>
-            )}
-          </div>
-        );
-      },
-    },
     {
       accessorKey: "status",
       header: "Status",
@@ -615,7 +604,13 @@ function TransactionsContent() {
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id} className={header.id === 'amountPaise' ? 'text-right' : ''}>
+                  <TableHead 
+                    key={header.id} 
+                    className={`
+                      ${header.id === 'amountPaise' ? 'text-right' : ''}
+                      ${header.id === 'serviceTitle' ? 'w-[180px] max-w-[180px]' : ''}
+                    `}
+                  >
                     {header.isPlaceholder
                       ? null
                       : flexRender(header.column.columnDef.header, header.getContext())}
@@ -648,7 +643,13 @@ function TransactionsContent() {
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className={cell.column.id === 'amountPaise' ? 'text-right' : ''}>
+                    <TableCell 
+                      key={cell.id} 
+                      className={`
+                        ${cell.column.id === 'amountPaise' ? 'text-right' : ''}
+                        ${cell.column.id === 'serviceTitle' ? 'w-[180px] max-w-[180px]' : ''}
+                      `}
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}
