@@ -1,4 +1,5 @@
 const FinancialSummaryService = require('../../services/financialSummary.service');
+const TopRetailersService = require('../../services/topRetailers.service');
 
 // @desc    Get Master Financial & Business Executive Dashboard Report
 // @route   GET /api/admin/reports/dashboard
@@ -151,6 +152,43 @@ const getPaymentOverviewReport = async (req, res, next) => {
   }
 };
 
+// @desc    Get Top Retailers / Highest Recharge Volume Analytics
+// @route   GET /api/admin/reports/top-retailers
+// @route   GET /api/admin/analytics/top-retailers
+// @access  Private (Admin / Finance)
+const getTopRetailersReport = async (req, res, next) => {
+  try {
+    const { 
+      startDate, 
+      endDate, 
+      period = 'today', 
+      sortBy = 'volume', 
+      sortOrder = 'desc', 
+      limit = 10, 
+      accountType, 
+      showTest 
+    } = req.query;
+
+    const data = await TopRetailersService.getTopRetailers({
+      startDate,
+      endDate,
+      period,
+      sortBy,
+      sortOrder,
+      limit,
+      accountType,
+      showTest: showTest === 'true',
+    });
+
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getExecutiveDashboardReport,
   getDailyReport,
@@ -158,4 +196,5 @@ module.exports = {
   getCommissionReport,
   generateLedgerReport,
   getPaymentOverviewReport,
+  getTopRetailersReport,
 };

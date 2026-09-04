@@ -44,6 +44,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AccountTypeBadge } from "@/components/ui/account-type-badge";
 import { AccountTypeFilter, AccountTypeFilterValue } from "@/components/ui/account-type-filter";
+import { GlobalTransactionDetailsDrawer } from "./GlobalTransactionDetailsDrawer";
 
 function TransactionsContent() {
   const searchParams = useSearchParams();
@@ -58,6 +59,7 @@ function TransactionsContent() {
   const [paymentMethodFilter, setPaymentMethodFilter] = useState("all");
   const [showTest, setShowTest] = useState(false);
   const [accountTypeFilter, setAccountTypeFilter] = useState<AccountTypeFilterValue>("all");
+  const [selectedTransaction, setSelectedTransaction] = useState<TransactionEntry | null>(null);
 
   const { data, isLoading } = useGlobalTransactions(
     page,
@@ -222,6 +224,7 @@ function TransactionsContent() {
         return (
           <Link
             href={`/dashboard/retailers/${user._id}`}
+            onClick={(e) => e.stopPropagation()}
             className="flex flex-col items-start gap-0.5 hover:bg-slate-100/60 dark:hover:bg-slate-800/60 p-1.5 -m-1.5 rounded-lg transition-colors group"
           >
             <span className="font-semibold text-primary group-hover:underline text-sm leading-snug">
@@ -358,17 +361,22 @@ function TransactionsContent() {
         }
 
         return (
-          <div className="flex flex-col text-right">
-            <span className={`text-sm sm:text-base font-mono ${colorClass}`}>
+          <div className="flex flex-col items-end text-right whitespace-nowrap min-w-[110px]">
+            <span className={`text-sm sm:text-base font-mono ${colorClass} whitespace-nowrap`}>
               {prefix}₹{amountRupees}
             </span>
             {row.commissionEarnedPaise > 0 && (
-              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium font-mono whitespace-nowrap leading-tight">
                 Comm: +₹{(row.commissionEarnedPaise / 100).toFixed(2)}
               </span>
             )}
+            {row.netPayablePaise && row.netPayablePaise !== row.amountPaise && (
+              <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium font-mono whitespace-nowrap leading-tight" title="Net Wallet Debited">
+                Debit: -₹{(row.netPayablePaise / 100).toFixed(2)}
+              </span>
+            )}
             {row.closingBalancePaise !== null && row.closingBalancePaise !== undefined && (
-              <span className="text-[10px] text-muted-foreground font-mono" title="Balance After Transaction">
+              <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap leading-tight" title="Balance After Transaction">
                 Bal: ₹{(row.closingBalancePaise / 100).toFixed(2)}
               </span>
             )}
@@ -607,7 +615,7 @@ function TransactionsContent() {
                   <TableHead 
                     key={header.id} 
                     className={`
-                      ${header.id === 'amountPaise' ? 'text-right' : ''}
+                      ${header.id === 'amountPaise' ? 'text-right min-w-[130px] whitespace-nowrap' : ''}
                       ${header.id === 'serviceTitle' ? 'w-[180px] max-w-[180px]' : ''}
                     `}
                   >
@@ -641,12 +649,16 @@ function TransactionsContent() {
               </TableRow>
             ) : (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                <TableRow 
+                  key={row.id} 
+                  onClick={() => setSelectedTransaction(row.original)}
+                  className="hover:bg-slate-50/80 dark:hover:bg-slate-800/60 transition-colors cursor-pointer group"
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell 
                       key={cell.id} 
                       className={`
-                        ${cell.column.id === 'amountPaise' ? 'text-right' : ''}
+                        ${cell.column.id === 'amountPaise' ? 'text-right min-w-[130px] whitespace-nowrap' : ''}
                         ${cell.column.id === 'serviceTitle' ? 'w-[180px] max-w-[180px]' : ''}
                       `}
                     >
@@ -690,6 +702,12 @@ function TransactionsContent() {
           </div>
         )}
       </div>
+
+      {/* Global Transaction Details Drawer */}
+      <GlobalTransactionDetailsDrawer 
+        transaction={selectedTransaction} 
+        onClose={() => setSelectedTransaction(null)} 
+      />
     </div>
   );
 }

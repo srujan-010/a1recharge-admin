@@ -55,10 +55,17 @@ class UnifiedTransactionService {
     if (s === 'wallet_adjustment') {
       return t === 'credit' ? 'ADMIN_CREDIT' : 'ADMIN_DEBIT';
     }
-    if (s === 'dth' || ['tata sky', 'dish tv', 'sun direct', 'videocon d2h'].includes(s)) {
+    if (s === 'dth' || ['tata sky', 'dish tv', 'sun direct', 'videocon d2h', 'd2h', 'ts', 'ad', 'vd', 'sun'].includes(s)) {
       return 'DTH_RECHARGE';
     }
-    if (s === 'mobile_recharge' || s === 'mobile' || ['airtel', 'jio', 'bsnl topup', 'bsnl', 'vi', 'reliance - jio'].includes(s)) {
+    if (
+      s === 'mobile_recharge' || 
+      s === 'mobile' || 
+      ['airtel', 'jio', 'bsnl topup', 'bsnl', 'vi', 'reliance - jio', 'a', 'v', 'j', 'bt', 'br', 'stv', 'rc'].includes(s) ||
+      (doc.orderId && String(doc.orderId).startsWith('A1R')) ||
+      (doc.referenceId && String(doc.referenceId).startsWith('A1R')) ||
+      !!doc.recharge
+    ) {
       return 'MOBILE_RECHARGE';
     }
     if (s === 'bbps') {
@@ -93,47 +100,165 @@ class UnifiedTransactionService {
     // Pipeline Construction
     const pipeline = [];
 
-    // Stage 1: Base projection from `transactions`
-    pipeline.push({
-      $project: {
-        _id: 1,
-        userId: 1,
-        accountType: 1,
-        type: { $toLower: '$type' },
-        amountPaise: {
-          $cond: [
-            { $and: [{ $ne: ['$amountPaise', null] }, { $gt: ['$amountPaise', 0] }] },
-            '$amountPaise',
-            { $round: [{ $multiply: [{ $ifNull: ['$amount', 0] }, 100] }, 0] }
-          ]
-        },
-        closingBalancePaise: { $ifNull: ['$closingBalancePaise', null] },
-        status: { $toUpper: { $ifNull: ['$status', 'PENDING'] } },
-        service: '$service',
-        referenceId: '$referenceId',
-        description: '$description',
-        mobileNumber: { $ifNull: ['$mobileNumber', '$recipientName'] },
-        operatorName: '$operatorName',
-        apiReference: '$apiReference',
-        commissionEarnedPaise: { $ifNull: ['$commissionEarnedPaise', 0] },
-        paymentMethod: { $toUpper: { $ifNull: ['$paymentMethod', 'WALLET'] } },
-        paymentStatus: '$paymentStatus',
-        source: { $ifNull: ['$source', 'SYSTEM'] },
-        performedBy: { $ifNull: ['$performedBy', null] },
-        adminId: { $ifNull: ['$adminId', null] },
-        adminName: { $ifNull: ['$adminName', null] },
-        reason: { $ifNull: ['$reason', null] },
-        upiDetails: '$upiDetails',
-        isTest: { $ifNull: ['$isTest', false] },
-        createdAt: '$createdAt'
+    // Stage 1: Base projection from `transactions`, enriched with recharge and wallet ledger
+    pipeline.push(
+      // Lookup matching recharge document
+      {
+        $lookup: {
+          from: 'rechargetransactions',
+          let: { refId: '$referenceId', txnId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: ['$orderId', '$$refId'] },
+                    { $eq: ['$_id', '$$refId'] },
+                    { $eq: ['$_id', '$$txnId'] }
+                  ]
+                }
+              }
+            },
+            { $limit: 1 }
+          ],
+          as: 'rcDoc'
+        }
+      },
+      {
+        $addFields: {
+          recharge: { $arrayElemAt: ['$rcDoc', 0] }
+        }
+      },
+      // Lookup matching wallet ledger document for closing balance and net debit
+      {
+        $lookup: {
+          from: 'walletledgers',
+          let: {
+            ledgerId: '$recharge.walletDebitLedgerId',
+            rcId: '$recharge._id',
+            refId: '$referenceId'
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: ['$_id', '$$ledgerId'] },
+                    { $eq: ['$referenceId', '$$rcId'] },
+                    { $eq: ['$referenceId', '$$refId'] }
+                  ]
+                }
+              }
+            },
+            { $limit: 1 }
+          ],
+          as: 'ledgerDoc'
+        }
+      },
+      {
+        $addFields: {
+          ledger: { $arrayElemAt: ['$ledgerDoc', 0] }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          userId: 1,
+          accountType: { $ifNull: ['$accountType', '$recharge.accountType'] },
+          type: { $toLower: '$type' },
+          amountPaise: {
+            $cond: [
+              { $and: [{ $ne: ['$amountPaise', null] }, { $gt: ['$amountPaise', 0] }] },
+              '$amountPaise',
+              { $round: [{ $multiply: [{ $ifNull: ['$amount', 0] }, 100] }, 0] }
+            ]
+          },
+          netPayablePaise: {
+            $cond: [
+              { $ne: ['$recharge.netPayablePaise', null] },
+              '$recharge.netPayablePaise',
+              {
+                $cond: [
+                  { $ne: ['$payableAmountPaise', null] },
+                  '$payableAmountPaise',
+                  {
+                    $cond: [
+                      { $ne: ['$ledger.amountPaise', null] },
+                      '$ledger.amountPaise',
+                      null
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          closingBalancePaise: {
+            $cond: [
+              { $ne: ['$closingBalancePaise', null] },
+              '$closingBalancePaise',
+              {
+                $cond: [
+                  { $ne: ['$ledger.balanceAfterPaise', null] },
+                  '$ledger.balanceAfterPaise',
+                  {
+                    $cond: [
+                      { $ne: ['$ledger.balanceAfter', null] },
+                      { $round: [{ $multiply: ['$ledger.balanceAfter', 100] }, 0] },
+                      null
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          status: { $toUpper: { $ifNull: ['$status', 'PENDING'] } },
+          service: { $ifNull: ['$recharge.serviceType', '$service'] },
+          referenceId: '$referenceId',
+          orderId: { $ifNull: ['$recharge.orderId', '$referenceId'] },
+          description: '$description',
+          mobileNumber: { $ifNull: ['$mobileNumber', { $ifNull: ['$recipientName', '$recharge.mobileNumber'] }] },
+          operatorName: { $ifNull: ['$operatorName', '$recharge.internalOperatorName'] },
+          apiReference: { $ifNull: ['$apiReference', '$recharge.providerTransactionId'] },
+          providerTransactionId: { $ifNull: ['$providerTransactionId', '$recharge.providerTransactionId'] },
+          walletDebitLedgerId: { $ifNull: ['$recharge.walletDebitLedgerId', '$ledger._id'] },
+          commissionEarnedPaise: {
+            $cond: [
+              { $gt: ['$commissionEarnedPaise', 0] },
+              '$commissionEarnedPaise',
+              {
+                $cond: [
+                  { $ne: ['$recharge.commissionAmountPaise', null] },
+                  '$recharge.commissionAmountPaise',
+                  0
+                ]
+              }
+            ]
+          },
+          paymentMethod: { $toUpper: { $ifNull: ['$paymentMethod', { $ifNull: ['$recharge.paymentMethod', 'WALLET'] }] } },
+          paymentStatus: '$paymentStatus',
+          source: { $ifNull: ['$source', 'SYSTEM'] },
+          performedBy: { $ifNull: ['$performedBy', null] },
+          adminId: { $ifNull: ['$adminId', null] },
+          adminName: { $ifNull: ['$adminName', null] },
+          reason: { $ifNull: ['$reason', null] },
+          upiDetails: '$upiDetails',
+          isTest: { $ifNull: ['$isTest', false] },
+          createdAt: '$createdAt'
+        }
       }
-    });
+    );
 
-    // Stage 2: Union WalletLedger entries that are not in transactions
+    // Stage 2: Union standalone WalletLedger entries (EXCLUDING recharge debits)
     pipeline.push({
       $unionWith: {
         coll: 'walletledgers',
         pipeline: [
+          // IMPORTANT: Strictly exclude recharge debits! They are the accounting records of parent recharges.
+          {
+            $match: {
+              referenceType: { $nin: ['RECHARGE', 'RECHARGE_DEBIT'] }
+            }
+          },
           {
             $lookup: {
               from: 'transactions',
@@ -179,6 +304,7 @@ class UnifiedTransactionService {
                   { $round: [{ $multiply: [{ $ifNull: ['$amount', 0] }, 100] }, 0] }
                 ]
               },
+              netPayablePaise: { $literal: null },
               closingBalancePaise: {
                 $cond: [
                   { $ne: ['$balanceAfterPaise', null] },
@@ -199,7 +325,6 @@ class UnifiedTransactionService {
                       }
                     },
                     { case: { $in: ['$referenceType', ['ADD_MONEY', 'RAZORPAY_WALLET_CREDIT']] }, then: 'wallet_topup' },
-                    { case: { $eq: ['$referenceType', 'RECHARGE'] }, then: 'mobile_recharge' },
                     { case: { $eq: ['$referenceType', 'COMMISSION'] }, then: 'commission' },
                     { case: { $eq: ['$referenceType', 'REFUND'] }, then: 'refund' },
                     { case: { $eq: ['$referenceType', 'HOLD_RELEASE'] }, then: 'wallet_hold_release' }
@@ -208,18 +333,20 @@ class UnifiedTransactionService {
                 }
               },
               referenceId: { $toString: '$referenceId' },
+              orderId: { $literal: null },
               description: '$description',
-              mobileNumber: null,
-              operatorName: null,
-              apiReference: null,
+              mobileNumber: { $literal: null },
+              operatorName: { $literal: null },
+              apiReference: { $literal: null },
+              providerTransactionId: { $literal: null },
+              walletDebitLedgerId: { $literal: null },
               commissionEarnedPaise: { $literal: 0 },
               paymentMethod: {
                 $switch: {
                   branches: [
                     { case: { $in: ['$referenceType', ['ADMIN_CREDIT', 'ADMIN_DEBIT', 'MANUAL']] }, then: 'ADMIN' },
                     { case: { $eq: ['$referenceType', 'ADD_MONEY'] }, then: 'UPI' },
-                    { case: { $eq: ['$referenceType', 'RAZORPAY_WALLET_CREDIT'] }, then: 'RAZORPAY' },
-                    { case: { $eq: ['$referenceType', 'RECHARGE'] }, then: 'WALLET' }
+                    { case: { $eq: ['$referenceType', 'RAZORPAY_WALLET_CREDIT'] }, then: 'RAZORPAY' }
                   ],
                   default: 'SYSTEM'
                 }
@@ -229,8 +356,7 @@ class UnifiedTransactionService {
                 $switch: {
                   branches: [
                     { case: { $in: ['$referenceType', ['ADMIN_CREDIT', 'ADMIN_DEBIT', 'MANUAL']] }, then: 'ADMIN' },
-                    { case: { $in: ['$referenceType', ['ADD_MONEY', 'RAZORPAY_WALLET_CREDIT']] }, then: 'RAZORPAY' },
-                    { case: { $eq: ['$referenceType', 'RECHARGE'] }, then: 'WALLET' }
+                    { case: { $in: ['$referenceType', ['ADD_MONEY', 'RAZORPAY_WALLET_CREDIT']] }, then: 'RAZORPAY' }
                   ],
                   default: 'SYSTEM'
                 }
@@ -239,7 +365,7 @@ class UnifiedTransactionService {
               adminId: { $ifNull: ['$adminId', null] },
               adminName: { $ifNull: ['$adminName', null] },
               reason: { $ifNull: ['$remark', '$description'] },
-              upiDetails: null,
+              upiDetails: { $literal: null },
               isTest: { $literal: false },
               createdAt: '$createdAt'
             }
@@ -248,7 +374,7 @@ class UnifiedTransactionService {
       }
     });
 
-    // Stage 3: Union RechargeTransaction entries not present in either
+    // Stage 3: Union RechargeTransaction entries not present in transactions
     pipeline.push({
       $unionWith: {
         coll: 'rechargetransactions',
@@ -274,30 +400,39 @@ class UnifiedTransactionService {
             }
           },
           {
+            $match: {
+              matchedTxn: { $size: 0 }
+            }
+          },
+          // Lookup ledger for this recharge
+          {
             $lookup: {
               from: 'walletledgers',
-              let: { ordId: '$orderId', rcId: '$_id' },
+              let: {
+                ledgerId: '$walletDebitLedgerId',
+                rcId: '$_id',
+                ordId: '$orderId'
+              },
               pipeline: [
                 {
                   $match: {
                     $expr: {
                       $or: [
-                        { $eq: ['$referenceId', '$$ordId'] },
+                        { $eq: ['$_id', '$$ledgerId'] },
                         { $eq: ['$referenceId', '$$rcId'] },
-                        { $eq: ['$referenceId', { $toString: '$$rcId' }] }
+                        { $eq: ['$referenceId', '$$ordId'] }
                       ]
                     }
                   }
                 },
                 { $limit: 1 }
               ],
-              as: 'matchedLedger'
+              as: 'rcLedger'
             }
           },
           {
-            $match: {
-              matchedTxn: { $size: 0 },
-              matchedLedger: { $size: 0 }
+            $addFields: {
+              matchedLedgerDoc: { $arrayElemAt: ['$rcLedger', 0] }
             }
           },
           {
@@ -306,8 +441,39 @@ class UnifiedTransactionService {
               userId: '$userId',
               accountType: '$accountType',
               type: { $literal: 'debit' },
-              amountPaise: { $round: [{ $multiply: [{ $ifNull: ['$amount', 0] }, 100] }, 0] },
-              closingBalancePaise: null,
+              amountPaise: {
+                $cond: [
+                  { $and: [{ $ne: ['$grossAmountPaise', null] }, { $gt: ['$grossAmountPaise', 0] }] },
+                  '$grossAmountPaise',
+                  { $round: [{ $multiply: [{ $ifNull: ['$amount', 0] }, 100] }, 0] }
+                ]
+              },
+              netPayablePaise: {
+                $cond: [
+                  { $ne: ['$netPayablePaise', null] },
+                  '$netPayablePaise',
+                  {
+                    $cond: [
+                      { $ne: ['$matchedLedgerDoc.amountPaise', null] },
+                      '$matchedLedgerDoc.amountPaise',
+                      null
+                    ]
+                  }
+                ]
+              },
+              closingBalancePaise: {
+                $cond: [
+                  { $ne: ['$matchedLedgerDoc.balanceAfterPaise', null] },
+                  '$matchedLedgerDoc.balanceAfterPaise',
+                  {
+                    $cond: [
+                      { $ne: ['$matchedLedgerDoc.balanceAfter', null] },
+                      { $round: [{ $multiply: ['$matchedLedgerDoc.balanceAfter', 100] }, 0] },
+                      null
+                    ]
+                  }
+                ]
+              },
               status: { $toUpper: { $ifNull: ['$status', 'PENDING'] } },
               service: {
                 $cond: [
@@ -316,12 +482,21 @@ class UnifiedTransactionService {
                   'mobile_recharge'
                 ]
               },
-              referenceId: '$orderId',
+              referenceId: { $ifNull: ['$orderId', { $toString: '$_id' }] },
+              orderId: '$orderId',
               description: { $concat: ['Recharge for ', { $ifNull: ['$mobileNumber', ''] }] },
               mobileNumber: '$mobileNumber',
-              operatorName: { $ifNull: ['$operatorCode', null] },
+              operatorName: { $ifNull: ['$internalOperatorName', '$operatorCode'] },
               apiReference: { $ifNull: ['$providerTransactionId', null] },
-              commissionEarnedPaise: { $round: [{ $multiply: [{ $ifNull: ['$commissionAmount', 0] }, 100] }, 0] },
+              providerTransactionId: { $ifNull: ['$providerTransactionId', null] },
+              walletDebitLedgerId: { $ifNull: ['$walletDebitLedgerId', '$matchedLedgerDoc._id'] },
+              commissionEarnedPaise: {
+                $cond: [
+                  { $ne: ['$commissionAmountPaise', null] },
+                  '$commissionAmountPaise',
+                  { $round: [{ $multiply: [{ $ifNull: ['$commissionAmount', 0] }, 100] }, 0] }
+                ]
+              },
               paymentMethod: { $toUpper: { $ifNull: ['$paymentMethod', 'WALLET'] } },
               paymentStatus: '$paymentStatus',
               source: { $literal: 'WALLET' },
@@ -421,7 +596,9 @@ class UnifiedTransactionService {
                 case: {
                   $or: [
                     { $eq: ['$service', 'dth'] },
-                    { $in: [{ $toUpper: '$service' }, ['DISH TV', 'TATA SKY', 'SUN DIRECT', 'VIDEOCON D2H']] }
+                    { $in: [{ $toUpper: '$service' }, ['DISH TV', 'TATA SKY', 'SUN DIRECT', 'VIDEOCON D2H', 'D2H', 'TS', 'AD', 'VD', 'SUN']] },
+                    { $regexMatch: { input: { $ifNull: ['$orderId', ''] }, regex: '^A1DTH', options: 'i' } },
+                    { $regexMatch: { input: { $ifNull: ['$referenceId', ''] }, regex: '^A1DTH', options: 'i' } }
                   ]
                 },
                 then: 'DTH_RECHARGE'
@@ -430,7 +607,9 @@ class UnifiedTransactionService {
                 case: {
                   $or: [
                     { $in: ['$service', ['mobile_recharge', 'mobile', 'recharge']] },
-                    { $in: [{ $toUpper: '$service' }, ['AIRTEL', 'JIO', 'BSNL TOPUP', 'BSNL', 'VI', 'RELIANCE - JIO']] }
+                    { $in: [{ $toUpper: '$service' }, ['AIRTEL', 'JIO', 'BSNL TOPUP', 'BSNL', 'VI', 'RELIANCE - JIO', 'A', 'V', 'J', 'BT', 'BR', 'STV', 'RC', 'MOBILE']] },
+                    { $regexMatch: { input: { $ifNull: ['$orderId', ''] }, regex: '^A1R', options: 'i' } },
+                    { $regexMatch: { input: { $ifNull: ['$referenceId', ''] }, regex: '^A1R', options: 'i' } }
                   ]
                 },
                 then: 'MOBILE_RECHARGE'
@@ -558,8 +737,10 @@ class UnifiedTransactionService {
         { 'userDoc.retailerId': { $regex: q, $options: 'i' } },
         { 'userDoc.phone': { $regex: q, $options: 'i' } },
         { referenceId: { $regex: q, $options: 'i' } },
+        { orderId: { $regex: q, $options: 'i' } },
         { mobileNumber: { $regex: q, $options: 'i' } },
         { apiReference: { $regex: q, $options: 'i' } },
+        { providerTransactionId: { $regex: q, $options: 'i' } },
         { 'upiDetails.gatewayPaymentId': { $regex: q, $options: 'i' } },
         { 'upiDetails.gatewayOrderId': { $regex: q, $options: 'i' } },
         { 'upiDetails.utr': { $regex: q, $options: 'i' } },
@@ -570,33 +751,27 @@ class UnifiedTransactionService {
       ];
 
       if (mongoose.Types.ObjectId.isValid(q)) {
-        searchConditions.push({ adminId: new mongoose.Types.ObjectId(q) });
-        searchConditions.push({ userId: new mongoose.Types.ObjectId(q) });
         searchConditions.push({ _id: new mongoose.Types.ObjectId(q) });
       }
 
-      if (matchFilters.$or) {
-        matchFilters.$and = [{ $or: matchFilters.$or }, { $or: searchConditions }];
-        delete matchFilters.$or;
-      } else {
-        matchFilters.$or = searchConditions;
-      }
+      matchFilters.$or = searchConditions;
     }
 
     pipeline.push({ $match: matchFilters });
 
-    // Stage 7: Sort by createdAt descending
-    pipeline.push({ $sort: { createdAt: -1 } });
-
-    // Stage 8: Facet for Pagination and Total
+    // Stage 7: Sorting and Pagination via Facet
     pipeline.push({
       $facet: {
         metadata: [{ $count: 'total' }],
-        data: [{ $skip: skip }, { $limit: limitNum }]
+        data: [
+          { $sort: { createdAt: -1, _id: -1 } },
+          { $skip: skip },
+          { $limit: limitNum }
+        ]
       }
     });
 
-    const [facetResult] = await db.collection('transactions').aggregate(pipeline).toArray();
+    const [facetResult] = await db.collection('transactions').aggregate(pipeline, { allowDiskUse: true }).toArray();
 
     const total = facetResult?.metadata?.[0]?.total || 0;
     const rawData = facetResult?.data || [];
@@ -646,6 +821,10 @@ class UnifiedTransactionService {
         || (canonicalType.includes('WALLET_TOPUP') ? doc.referenceId : null)
         || null;
 
+      const netPayablePaise = doc.netPayablePaise !== null && doc.netPayablePaise !== undefined 
+        ? Math.round(doc.netPayablePaise) 
+        : null;
+
       return {
         _id: doc._id,
         userId: user,
@@ -654,6 +833,8 @@ class UnifiedTransactionService {
         type: doc.type,
         amountPaise: Math.round(doc.amountPaise || 0),
         amountRupees: Number(((doc.amountPaise || 0) / 100).toFixed(2)),
+        netPayablePaise,
+        netPayableRupees: netPayablePaise !== null ? Number((netPayablePaise / 100).toFixed(2)) : null,
         closingBalancePaise: doc.closingBalancePaise !== null ? Math.round(doc.closingBalancePaise) : null,
         closingBalanceRupees: doc.closingBalancePaise !== null ? Number((doc.closingBalancePaise / 100).toFixed(2)) : null,
         status: doc.status.toLowerCase(),
@@ -664,7 +845,10 @@ class UnifiedTransactionService {
         targetIdentifier,
         operatorName: doc.operatorName || null,
         apiReference: doc.apiReference || null,
+        providerTransactionId: doc.providerTransactionId || doc.apiReference || null,
+        orderId: doc.orderId || doc.referenceId,
         referenceId: doc.referenceId,
+        walletDebitLedgerId: doc.walletDebitLedgerId || null,
         commissionEarnedPaise: Math.round(doc.commissionEarnedPaise || 0),
         paymentMethod: doc.paymentMethod,
         source: doc.source || 'SYSTEM',

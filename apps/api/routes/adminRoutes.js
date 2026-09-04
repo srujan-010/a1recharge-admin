@@ -27,7 +27,8 @@ const {
   getOperatorReport,
   getCommissionReport,
   generateLedgerReport,
-  getPaymentOverviewReport 
+  getPaymentOverviewReport,
+  getTopRetailersReport
 } = require('../controllers/admin/reportController');
 const { sendGlobalNotification, getRecentBroadcasts, sendDirectSMS } = require('../controllers/admin/notificationController');
 const { getSettings, updateSettings } = require('../controllers/admin/settingsController');
@@ -119,6 +120,8 @@ router.get('/reports/operators', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE
 router.get('/reports/commissions', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getCommissionReport);
 router.get('/reports/ledger', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), generateLedgerReport);
 router.get('/reports/payment-overview', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getPaymentOverviewReport);
+router.get('/reports/top-retailers', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getTopRetailersReport);
+router.get('/analytics/top-retailers', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'ADMIN'), getTopRetailersReport);
 
 // Internal Notification routes
 router.post('/notifications/broadcast', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), idempotency, sendGlobalNotification);

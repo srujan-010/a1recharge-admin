@@ -28,6 +28,17 @@ export function AccountTypeBadge({ type, className = '', size = 'md' }: AccountT
     );
   }
 
+  if (accountType === 'RETAILER') {
+    return (
+      <span
+        className={`inline-flex items-center gap-1.5 rounded-md border bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60 uppercase shadow-xs ${sizeClasses} ${className}`}
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400"></span>
+        RETAILER
+      </span>
+    );
+  }
+
   if (accountType === 'PERSONAL') {
     return (
       <span

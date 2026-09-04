@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type AccountTypeFilterValue = 'all' | 'PERSONAL' | 'BUSINESS';
+export type AccountTypeFilterValue = 'all' | 'PERSONAL' | 'BUSINESS' | 'RETAILER';
 
 interface AccountTypeFilterProps {
   value: AccountTypeFilterValue | string;
@@ -27,6 +27,7 @@ export function AccountTypeFilter({
         className={`h-[44px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[140px] ${className}`}
       >
         {showAll && <option value="all">Account Type: All</option>}
+        <option value="retailer">Retailer</option>
         <option value="personal">Personal</option>
         <option value="business">Business</option>
       </select>
@@ -39,7 +40,7 @@ export function AccountTypeFilter({
         <button
           type="button"
           onClick={() => onChange('all')}
-          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
+          className={`px-3 sm:px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
             normalizedValue === 'all'
               ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
               : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -50,8 +51,20 @@ export function AccountTypeFilter({
       )}
       <button
         type="button"
+        onClick={() => onChange('RETAILER')}
+        className={`px-3 sm:px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+          normalizedValue === 'retailer'
+            ? 'bg-emerald-600 text-white shadow-sm'
+            : 'text-slate-600 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400'
+        }`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${normalizedValue === 'retailer' ? 'bg-white' : 'bg-emerald-500'}`} />
+        Retailer
+      </button>
+      <button
+        type="button"
         onClick={() => onChange('PERSONAL')}
-        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+        className={`px-3 sm:px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
           normalizedValue === 'personal'
             ? 'bg-blue-600 text-white shadow-sm'
             : 'text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400'
@@ -63,7 +76,7 @@ export function AccountTypeFilter({
       <button
         type="button"
         onClick={() => onChange('BUSINESS')}
-        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+        className={`px-3 sm:px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
           normalizedValue === 'business'
             ? 'bg-purple-600 text-white shadow-sm'
             : 'text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-400'

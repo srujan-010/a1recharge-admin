@@ -23,7 +23,8 @@ import {
   UserCog,
   FileCheck,
   MessageSquare,
-  Cpu
+  Cpu,
+  Award
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -92,6 +93,7 @@ const navSections: NavSection[] = [
     allowedRoles: ['SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'],
     items: [
       { name: 'Reports', href: '/dashboard/reports?type=revenue', icon: BarChart3, allowedRoles: ['SUPER_ADMIN', 'FINANCE'] },
+      { name: 'Top Retailers', href: '/dashboard/reports/top-retailers', icon: Award, allowedRoles: ['SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'] },
     ]
   },
   {
