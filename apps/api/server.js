@@ -91,11 +91,11 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health endpoint
 app.get('/api/health', (req, res) => {
-  const { getDiagnosticStatus } = require('./config/firebase');
+  const { isConfigured } = require('./config/firebase');
   res.json({
     status: 'ok',
     server: 'running',
-    firebase: getDiagnosticStatus()
+    firebaseConfigured: isConfigured()
   });
 });
 
