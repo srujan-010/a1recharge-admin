@@ -42,16 +42,18 @@ const sendFCMNotification = async (req, res, next) => {
 
     const app = getApp();
     if (!app) {
+      console.error('[FCM] Push aborted: Firebase Admin SDK is not configured on this server.');
       return res.status(400).json({
         success: false,
         total: targetUsers.length,
         sent: 0,
         failed: targetUsers.length,
-        message: 'Firebase Admin SDK is not configured. Please verify FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables.',
-        data: targetUsers.map(u => ({ userId: u._id, status: 'FAILED', error: 'Firebase Admin SDK not initialized' }))
+        message: 'Failed to send notification. Please check Firebase notification configuration.',
+        data: targetUsers.map(u => ({ userId: u._id, status: 'FAILED', error: 'Firebase notification service not configured' }))
       });
     }
 
+    console.log(`[FCM] Sending notification to ${targetUsers.length} recipient(s): "${title}"`);
     const messaging = getMessaging(app);
     const sendResults = [];
     let sentCount = 0;
@@ -181,12 +183,14 @@ const testFCMNotification = async (req, res, next) => {
 
     const app = getApp();
     if (!app) {
+      console.error('[FCM] Test push aborted: Firebase Admin SDK is not configured on this server.');
       return res.status(400).json({
         success: false,
-        message: 'Firebase Admin SDK is not configured. Please verify FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables.'
+        message: 'Failed to send notification. Please check Firebase notification configuration.'
       });
     }
 
+    console.log('[FCM] Sending notification');
     const messaging = getMessaging(app);
     const messagePayload = {
       token: fcmToken,
@@ -195,6 +199,7 @@ const testFCMNotification = async (req, res, next) => {
     };
 
     const response = await messaging.send(messagePayload);
+    console.log('[FCM] Notification sent successfully');
 
     res.status(200).json({
       success: true,

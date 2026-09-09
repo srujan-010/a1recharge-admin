@@ -128,9 +128,8 @@ async function runRenderEnvTests() {
 
       await testFCMNotification(reqTest, res, () => {});
       assert.strictEqual(statusCode, 400);
-      assert(jsonPayload.message.includes('FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY'),
-        `Expected message to reference env vars, got: "${jsonPayload.message}"`);
-      console.log('✅ TEST 5 PASSED: Error response properly guides the operator on environment variables.');
+      assert.strictEqual(jsonPayload.message, 'Failed to send notification. Please check Firebase notification configuration.');
+      console.log('✅ TEST 5 PASSED: Error response is user-friendly without exposing internal environment details.');
 
     } finally {
       // Always restore service-account.json

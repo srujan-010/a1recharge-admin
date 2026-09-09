@@ -103,6 +103,7 @@ const initFirebaseAdmin = () => {
       console.log(`[FIREBASE] Project ID: ${resolvedProjectId}`);
       console.log(`[FIREBASE] Client email configured: ${hasClientEmail ? 'YES' : 'NO'}`);
       console.log(`[FIREBASE] Private key configured: ${hasPrivateKey ? 'YES' : 'NO'}`);
+      console.log('[FIREBASE] Service account configured: YES');
 
       cachedApp = initializeApp({
         credential: cert(serviceAccount),
@@ -111,11 +112,13 @@ const initFirebaseAdmin = () => {
 
       console.log('[FIREBASE] Admin SDK initialized successfully');
     } else {
+      console.log('[FIREBASE] Service account configured: NO');
       console.warn(`[FIREBASE] Warning: No valid Firebase Admin credentials found (checked service-account.json, FIREBASE_SERVICE_ACCOUNT, and FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY). Push notifications will be disabled.`);
       cachedApp = null;
     }
   } catch (error) {
     console.error(`[FIREBASE] Initialization Error for project "${DEFAULT_PROJECT_ID}":`, error.message);
+    console.log('[FIREBASE] Service account configured: NO');
     cachedApp = null;
   }
 
@@ -127,4 +130,6 @@ const getFirebaseApp = () => {
   return initFirebaseAdmin();
 };
 
-module.exports = { getApp: getFirebaseApp, initFirebaseAdmin };
+const isConfigured = () => Boolean(cachedApp || getFirebaseApp());
+
+module.exports = { getApp: getFirebaseApp, initFirebaseAdmin, isConfigured };
