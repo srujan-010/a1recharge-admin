@@ -47,7 +47,7 @@ const sendFCMNotification = async (req, res, next) => {
         total: targetUsers.length,
         sent: 0,
         failed: targetUsers.length,
-        message: 'Firebase Admin SDK is not configured. Please supply service-account.json or FIREBASE_SERVICE_ACCOUNT environment variable.',
+        message: 'Firebase Admin SDK is not configured. Please verify FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables.',
         data: targetUsers.map(u => ({ userId: u._id, status: 'FAILED', error: 'Firebase Admin SDK not initialized' }))
       });
     }
@@ -179,7 +179,15 @@ const testFCMNotification = async (req, res, next) => {
       throw new Error('fcmToken, title, and body are required.');
     }
 
-    const messaging = getMessaging(getApp());
+    const app = getApp();
+    if (!app) {
+      return res.status(400).json({
+        success: false,
+        message: 'Firebase Admin SDK is not configured. Please verify FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables.'
+      });
+    }
+
+    const messaging = getMessaging(app);
     const messagePayload = {
       token: fcmToken,
       notification: { title, body },
