@@ -36,6 +36,8 @@ const parsePrivateKey = (key) => {
   return normalized;
 };
 
+let lastInitError = null;
+
 const initFirebaseAdmin = () => {
   if (cachedApp) return cachedApp;
   if (getApps().length > 0) {
@@ -44,6 +46,7 @@ const initFirebaseAdmin = () => {
   }
 
   console.log('[FIREBASE] Initializing Firebase Admin SDK');
+  lastInitError = null;
 
   try {
     let serviceAccount = null;
@@ -117,11 +120,13 @@ const initFirebaseAdmin = () => {
 
       console.log('[FIREBASE] Admin SDK initialized successfully');
     } else {
+      lastInitError = 'No valid Firebase Admin credentials found (FIREBASE_CLIENT_EMAIL or FIREBASE_PRIVATE_KEY missing)';
       console.error('[FIREBASE] Admin SDK initialization FAILED');
-      console.error('[FIREBASE] Error: No valid Firebase Admin credentials found (FIREBASE_CLIENT_EMAIL or FIREBASE_PRIVATE_KEY missing).');
+      console.error('[FIREBASE] Error:', lastInitError);
       cachedApp = null;
     }
   } catch (error) {
+    lastInitError = error.message;
     console.error('[FIREBASE] Admin SDK initialization FAILED');
     console.error('[FIREBASE] Error:', error.message);
     cachedApp = null;
@@ -137,4 +142,6 @@ const getFirebaseApp = () => {
 
 const isConfigured = () => Boolean(cachedApp || getFirebaseApp());
 
-module.exports = { getApp: getFirebaseApp, initFirebaseAdmin, isConfigured };
+const getInitError = () => lastInitError;
+
+module.exports = { getApp: getFirebaseApp, initFirebaseAdmin, isConfigured, getInitError };

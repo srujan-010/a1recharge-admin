@@ -91,11 +91,19 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health endpoint
 app.get('/api/health', (req, res) => {
-  const { isConfigured } = require('./config/firebase');
+  const { isConfigured, getInitError } = require('./config/firebase');
   res.json({
     status: 'ok',
     server: 'running',
-    firebaseConfigured: isConfigured()
+    firebaseConfigured: isConfigured(),
+    firebaseInitError: getInitError(),
+    envCheck: {
+      hasProjectId: Boolean(process.env.FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECTID || process.env.PROJECT_ID),
+      hasClientEmail: Boolean(process.env.FIREBASE_CLIENT_EMAIL || process.env.FIREBASE_CLIENT_EMAIL_ADDRESS || process.env.CLIENT_EMAIL),
+      hasPrivateKey: Boolean(process.env.FIREBASE_PRIVATE_KEY || process.env.FIREBASE_PRIVATEKEY || process.env.PRIVATE_KEY),
+      privateKeyLength: (process.env.FIREBASE_PRIVATE_KEY || process.env.FIREBASE_PRIVATEKEY || process.env.PRIVATE_KEY || '').length,
+      hasServiceAccountEnv: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
+    }
   });
 });
 
