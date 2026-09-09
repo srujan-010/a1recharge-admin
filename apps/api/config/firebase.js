@@ -1,4 +1,5 @@
 const { initializeApp, getApp, getApps, cert } = require('firebase-admin/app');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
@@ -7,33 +8,53 @@ let cachedApp = null;
 
 /**
  * Normalizes private key string from environment variable.
- * Preserves the exact key bytes and replaces literal '\n' sequences with standard newlines.
+ * Handles:
+ * 1. Full PEM keys with -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY-----
+ * 2. Raw Base64 strings WITHOUT PEM headers (automatically wraps with BEGIN/END headers)
+ * 3. Escaped newlines (\n, \r\n, \\n)
+ * 4. Accidental outer single/double/escaped quotes
+ * 5. Validates with Node crypto before returning.
  */
-const parsePrivateKey = (key) => {
-  if (!key || typeof key !== 'string') return null;
-  let normalized = key.trim();
+const parsePrivateKey = (rawKey) => {
+  if (!rawKey || typeof rawKey !== 'string') return null;
 
+  let privateKey = rawKey.trim();
+
+  // Strip outer quotes ("...", '...', \"...\")
   while (
-    (normalized.startsWith('"') && normalized.endsWith('"')) ||
-    (normalized.startsWith("'") && normalized.endsWith("'")) ||
-    (normalized.startsWith('\\"') && normalized.endsWith('\\"'))
+    (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
+    (privateKey.startsWith("'") && privateKey.endsWith("'")) ||
+    (privateKey.startsWith('\\"') && privateKey.endsWith('\\"'))
   ) {
-    if (normalized.startsWith('\\"') && normalized.endsWith('\\"')) {
-      normalized = normalized.slice(2, -2).trim();
+    if (privateKey.startsWith('\\"') && privateKey.endsWith('\\"')) {
+      privateKey = privateKey.slice(2, -2).trim();
     } else {
-      normalized = normalized.slice(1, -1).trim();
+      privateKey = privateKey.slice(1, -1).trim();
     }
   }
 
-  normalized = normalized
-    .replace(/\\\\r\\\\n/g, '\n')
-    .replace(/\\\\n/g, '\n')
+  // Safely normalize escaped newlines
+  privateKey = privateKey
     .replace(/\\r\\n/g, '\n')
     .replace(/\\n/g, '\n')
     .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '');
+    .replace(/\r/g, '\n');
 
-  return normalized;
+  // If header or footer is missing, automatically add standard PEM headers
+  if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+    privateKey = `-----BEGIN PRIVATE KEY-----\n${privateKey}`;
+  }
+  if (!privateKey.includes('-----END PRIVATE KEY-----')) {
+    privateKey = `${privateKey}\n-----END PRIVATE KEY-----\n`;
+  }
+
+  // Verify using native Node crypto to ensure cert() will accept it
+  try {
+    crypto.createPrivateKey(privateKey);
+    return privateKey;
+  } catch (err) {
+    return null;
+  }
 };
 
 let lastInitError = null;
@@ -70,8 +91,10 @@ const initFirebaseAdmin = () => {
         serviceAccount = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (serviceAccount && (serviceAccount.private_key || serviceAccount.privateKey)) {
           const parsed = parsePrivateKey(serviceAccount.private_key || serviceAccount.privateKey);
-          serviceAccount.private_key = parsed;
-          serviceAccount.privateKey = parsed;
+          if (parsed) {
+            serviceAccount.private_key = parsed;
+            serviceAccount.privateKey = parsed;
+          }
         }
         authSource = 'FIREBASE_SERVICE_ACCOUNT env var';
       } catch (parseErr) {
@@ -103,7 +126,7 @@ const initFirebaseAdmin = () => {
     const clientEmailConfigured = Boolean(serviceAccount && (serviceAccount.client_email || serviceAccount.clientEmail));
     const privateKeyConfigured = Boolean(serviceAccount && (serviceAccount.private_key || serviceAccount.privateKey));
     const activeKey = serviceAccount ? (serviceAccount.private_key || serviceAccount.privateKey || '') : '';
-    const privateKeyFormatValid = Boolean(activeKey && activeKey.includes('BEGIN') && activeKey.includes('PRIVATE KEY'));
+    const privateKeyFormatValid = Boolean(activeKey && activeKey.includes('-----BEGIN PRIVATE KEY-----') && activeKey.includes('-----END PRIVATE KEY-----'));
 
     console.log(`[FIREBASE] Project ID configured: ${projectIdConfigured ? 'YES' : 'NO'}`);
     console.log(`[FIREBASE] Client email configured: ${clientEmailConfigured ? 'YES' : 'NO'}`);
@@ -120,15 +143,15 @@ const initFirebaseAdmin = () => {
 
       console.log('[FIREBASE] Admin SDK initialized successfully');
     } else {
-      lastInitError = 'No valid Firebase Admin credentials found (FIREBASE_CLIENT_EMAIL or FIREBASE_PRIVATE_KEY missing)';
+      lastInitError = 'No valid Firebase Admin credentials found (FIREBASE_CLIENT_EMAIL or FIREBASE_PRIVATE_KEY missing or malformed)';
       console.error('[FIREBASE] Admin SDK initialization FAILED');
-      console.error('[FIREBASE] Error:', lastInitError);
+      console.error('[FIREBASE] Reason:', lastInitError);
       cachedApp = null;
     }
   } catch (error) {
     lastInitError = error.message;
     console.error('[FIREBASE] Admin SDK initialization FAILED');
-    console.error('[FIREBASE] Error:', error.message);
+    console.error('[FIREBASE] Reason:', error.message);
     cachedApp = null;
   }
 
