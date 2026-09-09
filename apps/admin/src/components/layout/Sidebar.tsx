@@ -24,7 +24,8 @@ import {
   FileCheck,
   MessageSquare,
   Cpu,
-  Award
+  Award,
+  CreditCard
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
@@ -55,10 +56,11 @@ const navSections: NavSection[] = [
   },
   {
     title: 'FINANCE',
-    allowedRoles: ['SUPER_ADMIN', 'FINANCE', 'SUPPORT'],
+    allowedRoles: ['SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'],
     items: [
       { name: 'Provider Wallet', href: '/dashboard/wallet', icon: Wallet, allowedRoles: ['SUPER_ADMIN', 'FINANCE', 'SUPPORT'] },
       { name: 'Transactions', href: '/dashboard/transactions', icon: ArrowLeftRight, allowedRoles: ['SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'] },
+      { name: 'Manual Payments', href: '/dashboard/manual-payments', icon: CreditCard, allowedRoles: ['SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'] },
     ]
   },
   {

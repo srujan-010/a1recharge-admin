@@ -50,24 +50,33 @@ export function useManualAdjustment() {
       type,
       amountPaise,
       reason,
+      paymentMethod = 'UPI',
+      paymentStatus = 'PAID',
+      referenceId,
       idempotencyKey
     }: {
       userId: string;
       type: 'credit' | 'debit';
       amountPaise: number;
       reason: string;
-      idempotencyKey: string;
+      paymentMethod?: string;
+      paymentStatus?: string;
+      referenceId?: string;
+      idempotencyKey?: string;
     }) => {
       const { data } = await api.post(
         `/admin/wallets/${userId}/adjust`,
-        { type, amountPaise, reason },
-        { headers: { 'Idempotency-Key': idempotencyKey } }
+        { type, amountPaise, reason, paymentMethod, paymentStatus, referenceId },
+        { headers: { 'Idempotency-Key': idempotencyKey || referenceId || `adj_${userId}_${Date.now()}` } }
       );
       return data;
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['global-ledger'] });
       queryClient.invalidateQueries({ queryKey: ['global-transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['manual-payments'] });
+      queryClient.invalidateQueries({ queryKey: ['manual-payment-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['retailer-manual-payments'] });
       queryClient.invalidateQueries({ queryKey: ['retailer', variables.userId] });
     },
   });

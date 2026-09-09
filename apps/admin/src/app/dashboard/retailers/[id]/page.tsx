@@ -30,8 +30,10 @@ import { getPaymentMethod } from "@/lib/paymentUtils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AccountTypeBadge } from "@/components/ui/account-type-badge";
+import { useRetailerManualPayments } from "@/hooks/useManualPayments";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { format } from "date-fns";
 
 export default function RetailerProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -40,6 +42,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
 
   // Queries & Mutations
   const { data: retailerData, isLoading, isError, refetch, isFetching } = useRetailerProfile(id);
+  const { data: manualPaymentData, refetch: refetchManualPayments } = useRetailerManualPayments(id);
   const { mutate: updateStatus, isPending: isUpdatingStatus } = useUpdateRetailerStatus();
   const { mutate: unlockAccount, isPending: isUnlocking } = useUnlockRetailerAccount();
   const { mutate: updateKycStatus, isPending: isUpdatingKyc } = useUpdateKycStatus();
@@ -428,31 +431,31 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                   <div className="space-y-3">
                     <div>
                       <p className="text-[10px] text-slate-500 uppercase font-bold">Today's Credit</p>
-                      <p className="text-sm font-bold font-mono text-emerald-400">+₹{((wallet.todaysCredit || 0) / 100).toFixed(2)}</p>
+                      <p className="text-sm font-bold font-mono text-emerald-400">+₹{Number(wallet.todaysCredit || 0).toFixed(2)}</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-slate-500 uppercase font-bold">Lifetime Credit</p>
-                      <p className="text-sm font-bold font-mono">+₹{((wallet.lifetimeCredit || 0) / 100).toFixed(2)}</p>
+                      <p className="text-sm font-bold font-mono">+₹{Number(wallet.lifetimeCredit || 0).toFixed(2)}</p>
                     </div>
                   </div>
                   <div className="space-y-3">
                     <div className="bg-[#FF5A5F]/15 px-3 py-2 rounded-lg border border-[#FF5A5F]/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
                       <p className="text-[10px] text-[#FF5A5F] font-black uppercase tracking-wider mb-0.5">Today's Debit</p>
-                      <p className="text-[15px] font-black font-mono text-[#FF5A5F] drop-shadow-md">-₹{((wallet.todaysDebit || 0) / 100).toFixed(2)}</p>
+                      <p className="text-[15px] font-black font-mono text-[#FF5A5F] drop-shadow-md">-₹{Number(wallet.todaysDebit || 0).toFixed(2)}</p>
                     </div>
                     <div className="px-3">
                       <p className="text-[10px] text-slate-500 uppercase font-bold">Lifetime Debit</p>
-                      <p className="text-sm font-black font-mono text-[#FF5A5F] opacity-90">-₹{((wallet.lifetimeDebit || 0) / 100).toFixed(2)}</p>
+                      <p className="text-sm font-black font-mono text-[#FF5A5F] opacity-90">-₹{Number(wallet.lifetimeDebit || 0).toFixed(2)}</p>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <Button onClick={() => handleOpenAdjustment("credit")} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl">
+                  <Button onClick={() => handleOpenAdjustment("credit")} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl shadow-md">
                     <ArrowDownRight className="w-4 h-4 mr-1.5" /> Credit
                   </Button>
-                  <Button onClick={() => handleOpenAdjustment("debit")} variant="outline" className="flex-1 border-slate-700 hover:bg-slate-800 text-white font-bold h-11 rounded-xl">
-                    <ArrowUpRight className="w-4 h-4 mr-1.5" /> Debit
+                  <Button onClick={() => handleOpenAdjustment("debit")} variant="outline" className="flex-1 bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20 hover:border-rose-500/50 hover:text-rose-300 font-bold h-11 rounded-xl transition-all">
+                    <ArrowUpRight className="w-4 h-4 mr-1.5 text-rose-400" /> Debit
                   </Button>
                 </div>
               </div>
@@ -510,6 +513,162 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
               </div>
             </div>
 
+          </div>
+
+          {/* MANUAL PAYMENT STATUS CARD (Requirements 13-19) */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-blue-600" />
+                <h3 className="font-extrabold text-slate-900 dark:text-white text-sm uppercase tracking-wider">Payment Status</h3>
+              </div>
+              <Button
+                onClick={() => router.push(`/dashboard/manual-payments?search=${retailer.retailerId || retailer.phone}`)}
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs font-bold rounded-xl"
+              >
+                View All Manual Payments
+              </Button>
+            </div>
+
+            {manualPaymentData?.latestPayment ? (() => {
+              const p = manualPaymentData.latestPayment;
+              const isPaid = (p.paymentStatus === 'PAID' || p.status === 'PAID' || p.status === 'VERIFIED');
+              const isReversed = p.isReversed || p.walletStatus === 'REVERSED';
+              const methodDisplay = isPaid 
+                ? (p.paymentMethod === 'NOT_SET' || !p.paymentMethod ? 'UPI' : p.paymentMethod)
+                : 'Payment method: Not confirmed';
+              const addedByName = p.createdByName || p.createdBy?.name || 'Super Admin';
+              const paymentDateStr = format(new Date(p.paymentDate || p.createdAt), "dd MMM yyyy, hh:mm a");
+
+              return (
+                <div className="bg-slate-50 dark:bg-slate-950 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+                  {/* Row 1: Amount & Status Badge */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Amount</p>
+                      <p className="text-3xl font-black font-mono text-slate-900 dark:text-white">
+                        ₹{p.amount.toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <Badge className={`font-black text-xs px-3 py-1 uppercase rounded-full tracking-wider ${
+                        isPaid
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/70 dark:text-emerald-300 dark:border-emerald-800'
+                          : 'bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950/70 dark:text-rose-300 dark:border-rose-800'
+                      }`}>
+                        {isPaid ? 'PAID' : 'UNPAID'}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {/* Row 2: Payment Method */}
+                  <div className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                    {methodDisplay}
+                  </div>
+
+                  {/* Row 3: Wallet Status & Added By */}
+                  <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-200 dark:border-slate-800 text-xs">
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold mb-0.5">Wallet Status</span>
+                      {isReversed ? (
+                        <span className="font-extrabold text-rose-600 dark:text-rose-400">REVERSED ⚠</span>
+                      ) : p.walletCredited ? (
+                        <div className="space-y-0.5">
+                          <span className="font-bold text-slate-500 text-[11px] block">Wallet Credited</span>
+                          <span className="font-extrabold text-emerald-600 dark:text-emerald-400">✓ ₹{p.amount.toFixed(2)}</span>
+                        </div>
+                      ) : (
+                        <div className="space-y-0.5">
+                          <span className="font-bold text-slate-500 text-[11px] block">Wallet</span>
+                          <span className="font-extrabold text-amber-600 dark:text-amber-400">Not credited</span>
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold mb-0.5">Added By</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-200">{addedByName}</span>
+                    </div>
+                  </div>
+
+                  {/* Row 4: Timestamp */}
+                  <div className="text-[10px] text-slate-400 font-mono pt-1 text-right">
+                    {paymentDateStr}
+                  </div>
+                </div>
+              );
+            })() : (
+              <div className="p-6 text-center text-xs text-slate-400">
+                No manual payments recorded for this retailer yet.
+              </div>
+            )}
+          </div>
+
+          {/* MANUAL PAYMENT HISTORY TABLE (Requirement 14) */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-200 dark:border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900 dark:text-white">Manual Payment History</h3>
+              </div>
+              <span className="text-xs text-slate-400 font-medium">
+                {manualPaymentData?.payments?.length || 0} Records
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 uppercase font-bold tracking-wider border-b border-slate-200 dark:border-slate-800">
+                    <th className="py-2.5 px-3">Date</th>
+                    <th className="py-2.5 px-3 text-right">Amount</th>
+                    <th className="py-2.5 px-3">Method</th>
+                    <th className="py-2.5 px-3 text-center">Status</th>
+                    <th className="py-2.5 px-3 text-center">Wallet Credit</th>
+                    <th className="py-2.5 px-3">Added By</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
+                  {manualPaymentData?.payments?.map((p) => {
+                    const isPaid = (p.paymentStatus === 'PAID' || p.status === 'PAID' || p.status === 'VERIFIED');
+                    const isReversed = p.isReversed || p.walletStatus === 'REVERSED';
+                    const methodDisplay = isPaid 
+                      ? (p.paymentMethod === 'NOT_SET' || !p.paymentMethod ? 'UPI' : p.paymentMethod)
+                      : 'Not confirmed';
+                    return (
+                      <tr key={p._id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
+                        <td className="py-2.5 px-3 font-mono">{format(new Date(p.paymentDate || p.createdAt), "dd MMM, hh:mm a")}</td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 dark:text-white">₹{Number(p.amount).toFixed(2)}</td>
+                        <td className="py-2.5 px-3 font-bold">{methodDisplay}</td>
+                        <td className="py-2.5 px-3 text-center">
+                          <Badge className={`font-black text-[9px] uppercase ${
+                            isPaid ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300' : 'bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300'
+                          }`}>
+                            {isPaid ? 'PAID' : 'UNPAID'}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-bold">
+                          {isReversed ? (
+                            <span className="text-rose-600 dark:text-rose-400">Reversed ⚠</span>
+                          ) : p.walletCredited ? (
+                            <span className="text-emerald-600 dark:text-emerald-400">Credited ✓</span>
+                          ) : (
+                            <span className="text-amber-600 dark:text-amber-400">Not Credited</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3">{p.createdByName || p.createdBy?.name || 'Super Admin'}</td>
+                      </tr>
+                    );
+                  })}
+                  {(!manualPaymentData?.payments || manualPaymentData.payments.length === 0) && (
+                    <tr>
+                      <td colSpan={6} className="py-6 text-center text-slate-400">No manual payment history available</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* 5. TRANSACTIONS TABLE */}
@@ -883,6 +1042,7 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
         onClose={() => setIsAdjustmentModalOpen(false)}
         userId={retailer._id}
         retailerName={retailer.name}
+        currentBalanceRupees={walletBalance}
         defaultType={adjustmentType}
       />
 

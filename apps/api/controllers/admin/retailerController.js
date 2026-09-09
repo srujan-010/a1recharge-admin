@@ -230,10 +230,52 @@ const getRetailerById = async (req, res, next) => {
         {
           $group: {
             _id: null,
-            lifetimeCredit: { $sum: { $cond: [{ $eq: ['$transactionType', 'CREDIT'] }, '$amount', 0] } },
-            lifetimeDebit: { $sum: { $cond: [{ $eq: ['$transactionType', 'DEBIT'] }, '$amount', 0] } },
-            todaysCredit: { $sum: { $cond: [{ $and: [{ $eq: ['$transactionType', 'CREDIT'] }, { $gte: ['$createdAt', startOfToday] }] }, '$amount', 0] } },
-            todaysDebit: { $sum: { $cond: [{ $and: [{ $eq: ['$transactionType', 'DEBIT'] }, { $gte: ['$createdAt', startOfToday] }] }, '$amount', 0] } }
+            lifetimeCreditPaise: {
+              $sum: {
+                $cond: [
+                  { $eq: ['$transactionType', 'CREDIT'] },
+                  { $ifNull: ['$amountPaise', { $multiply: ['$amount', 100] }] },
+                  0
+                ]
+              }
+            },
+            lifetimeDebitPaise: {
+              $sum: {
+                $cond: [
+                  { $eq: ['$transactionType', 'DEBIT'] },
+                  { $ifNull: ['$amountPaise', { $multiply: ['$amount', 100] }] },
+                  0
+                ]
+              }
+            },
+            todaysCreditPaise: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$transactionType', 'CREDIT'] },
+                      { $gte: ['$createdAt', startOfToday] }
+                    ]
+                  },
+                  { $ifNull: ['$amountPaise', { $multiply: ['$amount', 100] }] },
+                  0
+                ]
+              }
+            },
+            todaysDebitPaise: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$transactionType', 'DEBIT'] },
+                      { $gte: ['$createdAt', startOfToday] }
+                    ]
+                  },
+                  { $ifNull: ['$amountPaise', { $multiply: ['$amount', 100] }] },
+                  0
+                ]
+              }
+            }
           }
         }
       ])
@@ -343,10 +385,14 @@ const getRetailerById = async (req, res, next) => {
           lifetimeProviderCommission: comm.lifetimeProviderCommission || 0
         },
         walletStats: {
-          lifetimeCredit: led.lifetimeCredit || 0,
-          lifetimeDebit: led.lifetimeDebit || 0,
-          todaysCredit: led.todaysCredit || 0,
-          todaysDebit: led.todaysDebit || 0
+          lifetimeCreditPaise: led.lifetimeCreditPaise || 0,
+          lifetimeDebitPaise: led.lifetimeDebitPaise || 0,
+          todaysCreditPaise: led.todaysCreditPaise || 0,
+          todaysDebitPaise: led.todaysDebitPaise || 0,
+          lifetimeCredit: Number(((led.lifetimeCreditPaise || 0) / 100).toFixed(2)),
+          lifetimeDebit: Number(((led.lifetimeDebitPaise || 0) / 100).toFixed(2)),
+          todaysCredit: Number(((led.todaysCreditPaise || 0) / 100).toFixed(2)),
+          todaysDebit: Number(((led.todaysDebitPaise || 0) / 100).toFixed(2))
         }
       }
     });

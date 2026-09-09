@@ -540,6 +540,24 @@ class UnifiedTransactionService {
               {
                 case: {
                   $or: [
+                    { $eq: ['$service', 'manual_wallet_topup'] },
+                    { $eq: ['$transactionType', 'MANUAL_TOPUP'] }
+                  ]
+                },
+                then: 'MANUAL_TOPUP'
+              },
+              {
+                case: {
+                  $or: [
+                    { $eq: ['$service', 'manual_wallet_reversal'] },
+                    { $eq: ['$transactionType', 'MANUAL_REVERSAL'] }
+                  ]
+                },
+                then: 'MANUAL_REVERSAL'
+              },
+              {
+                case: {
+                  $or: [
                     { $eq: ['$service', 'admin_credit'] },
                     { $and: [{ $eq: ['$source', 'ADMIN'] }, { $eq: ['$type', 'credit'] }] },
                     { $eq: ['$paymentMethod', 'ADMIN_CREDIT'] }
@@ -796,7 +814,11 @@ class UnifiedTransactionService {
 
       // Construct clean descriptive service name
       let serviceTitle = doc.description || '';
-      if (canonicalType === 'ADMIN_CREDIT') {
+      if (canonicalType === 'MANUAL_TOPUP' || doc.service === 'manual_wallet_topup') {
+        serviceTitle = 'Manual Wallet Top-up';
+      } else if (canonicalType === 'MANUAL_REVERSAL' || doc.service === 'manual_wallet_reversal') {
+        serviceTitle = 'Manual Top-up Reversal';
+      } else if (canonicalType === 'ADMIN_CREDIT') {
         serviceTitle = 'Manual Wallet Credit';
       } else if (canonicalType === 'ADMIN_DEBIT') {
         serviceTitle = 'Manual Wallet Debit';

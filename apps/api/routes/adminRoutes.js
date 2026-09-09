@@ -14,7 +14,7 @@ const {
   revokeRetailerSessions,
   releaseRetailerHold
 } = require('../controllers/admin/retailerController');
-const { getGlobalLedger, manualCreditDebit } = require('../controllers/admin/walletController');
+const { getGlobalLedger, manualCreditDebit, updatePaymentStatus, updatePaymentMethod, reverseWalletCredit } = require('../controllers/admin/walletController');
 const { getDashboardStats: getProviderWalletStats, getTransactions: getProviderWalletTransactions, getFast2SMSWallet } = require('../controllers/admin/providerWalletController');
 const { getGlobalTransactions } = require('../controllers/admin/transactionController');
 const { getCommissions, createCommission, updateCommission } = require('../controllers/admin/commissionController');
@@ -78,6 +78,10 @@ router.put('/users/:id', protectAdmin, authorize('SUPER_ADMIN'), updateAdminUser
 // Wallet Management routes
 router.get('/wallets/ledger', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE', 'SUPPORT'), getGlobalLedger);
 router.post('/wallets/:userId/adjust', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), idempotency, manualCreditDebit);
+router.post('/wallets/transactions/:id/payment-status', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), idempotency, updatePaymentStatus);
+router.post('/wallets/transactions/:id/payment-method', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), idempotency, updatePaymentMethod);
+router.post('/wallets/transactions/:id/reverse', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), idempotency, reverseWalletCredit);
+router.use('/manual-payments', require('./manualPaymentRoutes'));
 
 // Provider Wallet routes
 router.get('/provider-wallet/dashboard', protectAdmin, authorize('SUPER_ADMIN', 'FINANCE'), getProviderWalletStats);

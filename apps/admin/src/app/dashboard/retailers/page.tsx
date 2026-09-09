@@ -39,7 +39,7 @@ export default function RetailersPage() {
   // Modals State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [activeActionMenu, setActiveActionMenu] = useState<string | null>(null);
-  const [adjustmentTarget, setAdjustmentTarget] = useState<{ id: string; name: string; type: "credit" | "debit" } | null>(null);
+  const [adjustmentTarget, setAdjustmentTarget] = useState<{ id: string; name: string; type: "credit" | "debit"; currentBalanceRupees?: number } | null>(null);
   const [unlockModalTarget, setUnlockModalTarget] = useState<{ id: string; name: string } | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<{ text: string; isError?: boolean } | null>(null);
@@ -659,7 +659,7 @@ export default function RetailersPage() {
                       </td>
 
                       {/* Wallet Balance */}
-                      <td className="py-3.5 px-4 text-right align-middle font-mono">
+                      <td className="py-3.5 px-4 text-right align-middle font-mono whitespace-nowrap">
                         {retailer.accountType === 'PERSONAL' ? (
                           <span className="text-slate-400 font-normal">—</span>
                         ) : (
@@ -667,10 +667,10 @@ export default function RetailersPage() {
                             <div className="font-semibold text-sm text-slate-900 dark:text-white">
                               ₹{(retailer.walletBalancePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
-                            <div className="text-[11px] font-normal">
+                            <div className="text-[11px] font-normal whitespace-nowrap">
                               {isLowWallet ? (
-                                <span className="text-amber-600 dark:text-amber-400 font-semibold inline-flex items-center gap-1 justify-end">
-                                  <AlertTriangle className="w-3 h-3 text-amber-500" /> Low Wallet
+                                <span className="text-amber-600 dark:text-amber-400 font-semibold inline-flex items-center gap-1 justify-end whitespace-nowrap">
+                                  <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" /> Low Wallet
                                 </span>
                               ) : (
                                 <span className="text-slate-400">Available</span>
@@ -777,7 +777,7 @@ export default function RetailersPage() {
                                       showToast("Wallet adjustment disabled for blocked retailers", true);
                                       return;
                                     }
-                                    setAdjustmentTarget({ id: retailer._id, name: retailer.name, type: "credit" });
+                                    setAdjustmentTarget({ id: retailer._id, name: retailer.name, type: "credit", currentBalanceRupees: (retailer.walletBalancePaise || 0) / 100 });
                                   }}
                                   disabled={retailer.status === 'blocked'}
                                   className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md ${
@@ -1085,6 +1085,7 @@ export default function RetailersPage() {
           onClose={() => setAdjustmentTarget(null)}
           userId={adjustmentTarget.id}
           retailerName={adjustmentTarget.name}
+          currentBalanceRupees={adjustmentTarget.currentBalanceRupees}
           defaultType={adjustmentTarget.type}
         />
       )}
