@@ -121,7 +121,8 @@ const manualCreditDebit = async (req, res, next) => {
       throw new Error('Amount must be greater than 0.');
     }
 
-    if (!reason || reason.trim().length < 3) {
+    const trimmedReason = String(reason || '').trim();
+    if (!trimmedReason || trimmedReason.length < 3) {
       res.status(400);
       throw new Error('A valid reason is required for manual adjustments.');
     }
