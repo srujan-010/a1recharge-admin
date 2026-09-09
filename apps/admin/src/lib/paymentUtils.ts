@@ -1,4 +1,4 @@
-export type PaymentMethodType = 'WALLET' | 'UPI' | 'BANK_TRANSFER' | 'CASH' | 'CARD' | 'OTHER' | 'UNKNOWN';
+export type PaymentMethodType = 'WALLET' | 'UPI' | 'BANK_TRANSFER' | 'CASH' | 'CARD' | 'OTHER' | 'ADMIN_ADJUSTMENT' | 'NOT_SPECIFIED' | 'UNKNOWN';
 
 /**
  * Normalizes a raw payment status string to canonical PaymentMethodType
@@ -7,6 +7,12 @@ export function normalizeSinglePaymentString(val?: string | null): PaymentMethod
   if (!val || typeof val !== 'string') return null;
   const clean = val.trim().toUpperCase();
 
+  if (['ADMIN_ADJUSTMENT', 'ADMIN_DEBIT', 'ADMIN'].includes(clean)) {
+    return 'ADMIN_ADJUSTMENT';
+  }
+  if (['NOT_SPECIFIED', 'NOT_SET', 'UNPAID', 'NOT_PAID'].includes(clean)) {
+    return 'NOT_SPECIFIED';
+  }
   // Explicit UPI / Gateway aliases
   if (['RAZORPAY_UPI', 'RAZORPAY', 'UPI', 'BHIM_UPI', 'UPI_QR'].includes(clean)) {
     return 'UPI';
@@ -32,7 +38,7 @@ export function normalizeSinglePaymentString(val?: string | null): PaymentMethod
     return 'OTHER';
   }
 
-  if (['WALLET', 'UPI', 'BANK_TRANSFER', 'CASH', 'CARD', 'OTHER', 'UNKNOWN'].includes(clean)) {
+  if (['WALLET', 'UPI', 'BANK_TRANSFER', 'CASH', 'CARD', 'OTHER', 'ADMIN_ADJUSTMENT', 'NOT_SPECIFIED', 'UNKNOWN'].includes(clean)) {
     return clean as PaymentMethodType;
   }
 
@@ -41,7 +47,6 @@ export function normalizeSinglePaymentString(val?: string | null): PaymentMethod
 
 /**
  * Centralized Frontend Helper for Payment Method Classification.
- * Inspects paymentStatus first (authoritative), then paymentMethod/paymentMode, then gateway attributes.
  */
 export function getPaymentMethod(txn?: any): PaymentMethodType {
   if (!txn) return 'UNKNOWN';
@@ -51,26 +56,35 @@ export function getPaymentMethod(txn?: any): PaymentMethodType {
   }
 
   if (typeof txn === 'object') {
-    // 1. Check paymentStatus (authoritative)
-    if (txn.paymentStatus) {
-      const fromStatus = normalizeSinglePaymentString(txn.paymentStatus);
-      if (fromStatus) return fromStatus;
+    // 1. Check for Admin Adjustment / Manual Debit
+    if (
+      txn.paymentMethod === 'ADMIN_ADJUSTMENT' ||
+      txn.transactionType === 'ADMIN_DEBIT' ||
+      txn.service === 'manual_debit' ||
+      txn.service === 'admin_debit'
+    ) {
+      return 'ADMIN_ADJUSTMENT';
     }
 
-    // 2. Check paymentMethod
+    // 2. Check for UNPAID status
+    if (txn.paymentStatus === 'UNPAID' || txn.paymentMethod === 'NOT_SPECIFIED' || txn.paymentMethod === 'NOT_SET') {
+      return 'NOT_SPECIFIED';
+    }
+
+    // 3. Check explicit paymentMethod
     if (txn.paymentMethod) {
       const fromMethod = normalizeSinglePaymentString(txn.paymentMethod);
       if (fromMethod) return fromMethod;
     }
 
-    // 3. Check paymentMode
+    // 4. Check paymentMode
     if (txn.paymentMode) {
       const fromMode = normalizeSinglePaymentString(txn.paymentMode);
       if (fromMode) return fromMode;
     }
 
-    // 4. Concrete gateway indicators
-    if (txn.razorpayPaymentId || txn.razorpayOrderId || (txn.upiDetails && (txn.upiDetails.utr || txn.upiDetails.gatewayPaymentId))) {
+    // 5. Concrete gateway indicators
+    if (txn.razorpayPaymentId || txn.razorpayOrderId || (txn.upiDetails && txn.upiDetails.gatewayPaymentId)) {
       return 'UPI';
     }
   }

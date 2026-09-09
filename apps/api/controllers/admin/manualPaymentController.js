@@ -169,19 +169,19 @@ const getManualPaymentStats = async (req, res, next) => {
         { $match: { paymentStatus: 'UNPAID' } },
         { $group: { _id: null, count: { $sum: 1 }, totalPaise: { $sum: '$amountPaise' } } }
       ]),
-      // UPI
+      // UPI (Paid only)
       ManualPayment.aggregate([
-        { $match: { paymentMethod: 'UPI' } },
+        { $match: { paymentStatus: 'PAID', paymentMethod: 'UPI' } },
         { $group: { _id: null, count: { $sum: 1 }, totalPaise: { $sum: '$amountPaise' } } }
       ]),
-      // Cash
+      // Cash (Paid only)
       ManualPayment.aggregate([
-        { $match: { paymentMethod: 'CASH' } },
+        { $match: { paymentStatus: 'PAID', paymentMethod: 'CASH' } },
         { $group: { _id: null, count: { $sum: 1 }, totalPaise: { $sum: '$amountPaise' } } }
       ]),
-      // Bank Transfer
+      // Bank Transfer (Paid only)
       ManualPayment.aggregate([
-        { $match: { paymentMethod: 'BANK_TRANSFER' } },
+        { $match: { paymentStatus: 'PAID', paymentMethod: 'BANK_TRANSFER' } },
         { $group: { _id: null, count: { $sum: 1 }, totalPaise: { $sum: '$amountPaise' } } }
       ])
     ]);
@@ -408,25 +408,20 @@ const createManualPayment = async (req, res, next) => {
     }
 
     const validMethods = ['UPI', 'BANK_TRANSFER', 'CASH', 'OTHER'];
-    const normMethod = (paymentMethod || '').toUpperCase();
-    if (!validMethods.includes(normMethod)) {
-      res.status(400);
-      throw new Error(`Invalid payment method. Allowed: ${validMethods.join(', ')}`);
-    }
-
-    const retailer = await User.findById(retailerId);
-    if (!retailer) {
-      res.status(404);
-      throw new Error('Retailer not found.');
-    }
-
-    const adminUser = req.admin;
-    const adminName = adminUser?.name || 'System Admin';
-    const amountPaise = Math.round(numAmount * 100);
-    const rupees = Number((amountPaise / 100).toFixed(2));
-    const paymentId = await generatePaymentId();
-
+    const passedMethod = (paymentMethod || '').toUpperCase();
     const status = (initialStatus || '').toUpperCase() === 'RECEIVED' ? 'RECEIVED' : 'PENDING';
+    const isPaidStatus = status === 'RECEIVED' || (req.body.paymentStatus || '').toUpperCase() === 'PAID';
+
+    let finalMethod = null;
+    if (isPaidStatus) {
+      if (!validMethods.includes(passedMethod)) {
+        res.status(400);
+        throw new Error(`Payment method is required for paid payments. Allowed: ${validMethods.join(', ')}`);
+      }
+      finalMethod = passedMethod;
+    } else {
+      finalMethod = null;
+    }
 
     const newPayment = await ManualPayment.create({
       paymentId,
@@ -435,7 +430,8 @@ const createManualPayment = async (req, res, next) => {
       retailerPhone: retailer.phone,
       amountPaise,
       amount: rupees,
-      paymentMethod: normMethod,
+      paymentMethod: finalMethod,
+      paymentStatus: isPaidStatus ? 'PAID' : 'UNPAID',
       status,
       paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
       receivedAt: status === 'RECEIVED' ? new Date() : null,

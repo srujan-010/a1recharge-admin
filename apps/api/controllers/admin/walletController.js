@@ -96,7 +96,7 @@ const manualCreditDebit = async (req, res, next) => {
       amountPaise,
       amount,
       reason,
-      paymentMethod = 'UPI',
+      paymentMethod,
       paymentStatus = 'PAID',
       referenceId: customRef
     } = req.body;
@@ -138,28 +138,30 @@ const manualCreditDebit = async (req, res, next) => {
     const adminId = adminUser?._id || null;
     const isCredit = normType === 'credit';
     const amountRupees = Number((parsedPaise / 100).toFixed(2));
-    const canonicalPaymentStatus = ['PAID', 'UNPAID'].includes(String(paymentStatus).toUpperCase())
-      ? String(paymentStatus).toUpperCase()
-      : 'PAID';
 
-    // Canonical Payment Method logic (UNPAID does NOT require payment method)
     const validMethods = ['UPI', 'BANK_TRANSFER', 'CASH', 'OTHER'];
     const passedMethod = paymentMethod ? String(paymentMethod).toUpperCase() : '';
-    let canonicalMethod = 'NOT_SET';
 
-    if (canonicalPaymentStatus === 'PAID') {
-      if (validMethods.includes(passedMethod)) {
-        canonicalMethod = passedMethod;
-      } else {
-        res.status(400);
-        throw new Error('Please select a payment method for a paid payment.');
-      }
+    let canonicalPaymentStatus = 'PAID';
+    let canonicalMethod = null;
+
+    if (!isCredit) {
+      // DEBIT operation: Admin Adjustment only
+      canonicalPaymentStatus = 'PAID';
+      canonicalMethod = 'ADMIN_ADJUSTMENT';
     } else {
-      // UNPAID status: optional payment method
-      if (validMethods.includes(passedMethod)) {
-        canonicalMethod = passedMethod;
+      // CREDIT operation
+      canonicalPaymentStatus = String(paymentStatus).toUpperCase() === 'UNPAID' ? 'UNPAID' : 'PAID';
+      if (canonicalPaymentStatus === 'UNPAID') {
+        // UNPAID credit must NOT be assigned UPI, CASH, or BANK_TRANSFER
+        canonicalMethod = null;
       } else {
-        canonicalMethod = 'NOT_SET';
+        // PAID credit MUST have an explicit valid payment method
+        if (!passedMethod || !validMethods.includes(passedMethod)) {
+          res.status(400);
+          throw new Error('Payment method is required for paid payments.');
+        }
+        canonicalMethod = passedMethod;
       }
     }
 
@@ -248,10 +250,10 @@ const manualCreditDebit = async (req, res, next) => {
       reason: trimmedReason,
       description,
       referenceId: refId,
-      upiDetails: {
+      upiDetails: canonicalMethod === 'UPI' ? {
         utr: refId,
-        gateway: `Admin ${canonicalMethod}`
-      },
+        gateway: 'Manual UPI'
+      } : null,
       isTest: false
     });
 
@@ -375,10 +377,12 @@ const updatePaymentStatus = async (req, res, next) => {
     if (normStatus === 'PAID') {
       if (passedMethod && validMethods.includes(passedMethod)) {
         transaction.paymentMethod = passedMethod;
-      } else if (!transaction.paymentMethod || transaction.paymentMethod === 'NOT_SET') {
+      } else if (!transaction.paymentMethod || transaction.paymentMethod === 'NOT_SET' || transaction.paymentMethod === 'NOT_SPECIFIED') {
         res.status(400);
         throw new Error('Please select a payment method for a paid payment.');
       }
+    } else if (normStatus === 'UNPAID') {
+      transaction.paymentMethod = null;
     }
 
     // 1. Update Transaction

@@ -84,7 +84,7 @@ export function ManualAdjustmentModal({
     const idempotencyKey = `ADM_${type.toUpperCase()}_${activeUserId}_${Date.now()}`;
 
     // UNPAID does NOT require paymentMethod
-    const finalMethod = type === "credit" && paymentStatus === "PAID" ? paymentMethod : undefined;
+    const finalMethod = type === "credit" ? (paymentStatus === "PAID" ? paymentMethod : undefined) : "ADMIN_ADJUSTMENT";
 
     adjustWallet(
       {
@@ -93,7 +93,7 @@ export function ManualAdjustmentModal({
         amountPaise,
         reason: reason.trim() || (type === "credit" ? "Credit" : "Debit"),
         paymentMethod: finalMethod,
-        paymentStatus: type === "credit" ? paymentStatus : undefined,
+        paymentStatus: type === "credit" ? paymentStatus : "PAID",
         idempotencyKey
       },
       {
@@ -121,8 +121,14 @@ export function ManualAdjustmentModal({
         {/* Modal Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950">
           <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white tracking-tight">Add Wallet Credit</h2>
-            <p className="text-xs text-slate-500 font-normal mt-0.5">Record a wallet credit and payment status for this retailer.</p>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white tracking-tight">
+              {type === "credit" ? "Add Wallet Credit" : "Manual Wallet Debit"}
+            </h2>
+            <p className="text-xs text-slate-500 font-normal mt-0.5">
+              {type === "credit"
+                ? "Record a wallet credit and payment status for this retailer."
+                : "Deduct money from retailer wallet for admin adjustments."}
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -228,16 +234,16 @@ export function ManualAdjustmentModal({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 className="w-full h-9 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-3 text-slate-900 dark:text-white text-xs font-normal focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400"
-                placeholder="e.g. Credit"
+                placeholder={type === "credit" ? "e.g. Credit" : "e.g. Debit adjustment"}
               />
             </div>
           </div>
 
-          {/* PAYMENT SECTION (Conditional Payment Method requirement) */}
+          {/* PAYMENT SECTION FOR CREDIT */}
           {type === "credit" && (
             <div className="p-3 bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-lg space-y-3">
               
-              {/* Payment Status Segmented Control (Requirement 8) */}
+              {/* Payment Status Segmented Control */}
               <div className="space-y-1">
                 <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                   Payment Status *
@@ -268,7 +274,7 @@ export function ManualAdjustmentModal({
                 </div>
               </div>
 
-              {/* Conditional Payment Method Display (Requirements 1, 3 & 7) */}
+              {/* Conditional Payment Method Display */}
               {paymentStatus === "PAID" ? (
                 <div className="space-y-1">
                   <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
@@ -290,12 +296,32 @@ export function ManualAdjustmentModal({
                   <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                     Payment Method
                   </label>
-                  <div className="h-9 px-3 bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center text-xs text-slate-500 dark:text-slate-400 font-medium italic">
-                    Payment not confirmed
+                  <div className="h-9 px-3 bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-medium">
+                    <span>Not Paid — Payment not confirmed</span>
+                    <span className="text-[10px] text-amber-600 font-bold uppercase">Disabled</span>
                   </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-normal mt-0.5">
+                    Payment method can be selected after payment is confirmed.
+                  </p>
                 </div>
               )}
 
+            </div>
+          )}
+
+          {/* PAYMENT SECTION FOR DEBIT */}
+          {type === "debit" && (
+            <div className="p-3 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/60 dark:border-rose-900/40 rounded-lg space-y-2 text-xs">
+              <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+                <span className="font-medium">Classification:</span>
+                <span className="font-semibold text-rose-600 dark:text-rose-400">Admin Adjustment</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-700 dark:text-slate-300">
+                <span className="font-medium">Payment Method:</span>
+                <span className="font-semibold text-slate-900 dark:text-white bg-slate-200/60 dark:bg-slate-800 px-2 py-0.5 rounded text-[11px]">
+                  Admin Adjustment
+                </span>
+              </div>
             </div>
           )}
 

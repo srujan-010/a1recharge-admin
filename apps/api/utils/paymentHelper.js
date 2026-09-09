@@ -8,6 +8,8 @@ const PAYMENT_TYPES = {
   CASH: 'CASH',
   CARD: 'CARD',
   OTHER: 'OTHER',
+  ADMIN_ADJUSTMENT: 'ADMIN_ADJUSTMENT',
+  NOT_SPECIFIED: 'NOT_SPECIFIED',
   UNKNOWN: 'UNKNOWN',
 };
 
@@ -20,6 +22,12 @@ function normalizeSingleString(val) {
   if (!val || typeof val !== 'string') return null;
   const clean = val.trim().toUpperCase();
 
+  if (['ADMIN_ADJUSTMENT', 'ADMIN_DEBIT', 'ADMIN'].includes(clean)) {
+    return PAYMENT_TYPES.ADMIN_ADJUSTMENT;
+  }
+  if (['NOT_SPECIFIED', 'NOT_SET', 'UNPAID', 'NOT_PAID'].includes(clean)) {
+    return PAYMENT_TYPES.NOT_SPECIFIED;
+  }
   // Explicit UPI / Gateway aliases
   if (['RAZORPAY_UPI', 'RAZORPAY', 'UPI', 'BHIM_UPI', 'UPI_QR'].includes(clean)) {
     return PAYMENT_TYPES.UPI;
@@ -56,11 +64,6 @@ function normalizeSingleString(val) {
 /**
  * Authoritative Payment Method Normalizer
  * Accepts string or transaction object.
- * Priority order for documents:
- * 1. doc.paymentStatus (authoritative if present and maps to an explicit payment method)
- * 2. doc.paymentMethod / doc.paymentMode
- * 3. doc.razorpayPaymentId / doc.razorpayOrderId / doc.upiDetails (concrete gateway proof)
- * 4. Fallback: UNKNOWN (never guess)
  */
 function normalizePaymentType(input) {
   if (!input) return PAYMENT_TYPES.UNKNOWN;
@@ -70,26 +73,35 @@ function normalizePaymentType(input) {
   }
 
   if (typeof input === 'object') {
-    // 1. paymentStatus (authoritative if present and maps to explicit payment method)
-    if (input.paymentStatus) {
-      const fromStatus = normalizeSingleString(input.paymentStatus);
-      if (fromStatus) return fromStatus;
+    // 1. Check for Admin Adjustment / Manual Debit
+    if (
+      input.paymentMethod === 'ADMIN_ADJUSTMENT' ||
+      input.transactionType === 'ADMIN_DEBIT' ||
+      input.service === 'manual_debit' ||
+      input.service === 'admin_debit'
+    ) {
+      return PAYMENT_TYPES.ADMIN_ADJUSTMENT;
     }
 
-    // 2. paymentMethod
+    // 2. Check for UNPAID status
+    if (input.paymentStatus === 'UNPAID' || input.paymentMethod === 'NOT_SPECIFIED' || input.paymentMethod === 'NOT_SET') {
+      return PAYMENT_TYPES.NOT_SPECIFIED;
+    }
+
+    // 3. Check explicit paymentMethod
     if (input.paymentMethod) {
       const fromMethod = normalizeSingleString(input.paymentMethod);
       if (fromMethod) return fromMethod;
     }
 
-    // 3. paymentMode
+    // 4. Check paymentMode
     if (input.paymentMode) {
       const fromMode = normalizeSingleString(input.paymentMode);
       if (fromMode) return fromMode;
     }
 
-    // 4. Concrete gateway indicators
-    if (input.razorpayPaymentId || input.razorpayOrderId || (input.upiDetails && (input.upiDetails.utr || input.upiDetails.gatewayPaymentId))) {
+    // 5. Concrete online gateway indicators (must have razorpayPaymentId or gatewayPaymentId)
+    if (input.razorpayPaymentId || input.razorpayOrderId || (input.upiDetails && input.upiDetails.gatewayPaymentId)) {
       return PAYMENT_TYPES.UPI;
     }
   }

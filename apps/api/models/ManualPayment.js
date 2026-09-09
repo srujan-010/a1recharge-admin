@@ -36,8 +36,8 @@ const manualPaymentSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ['UPI', 'BANK_TRANSFER', 'CASH', 'OTHER', 'NOT_SET'],
-      default: 'UPI',
+      enum: ['UPI', 'BANK_TRANSFER', 'CASH', 'OTHER', 'ADMIN_ADJUSTMENT', 'NOT_SPECIFIED', 'NOT_SET', null],
+      default: null,
     },
     paymentStatus: {
       type: String,

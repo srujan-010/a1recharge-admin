@@ -30,6 +30,8 @@ import {
   Unlock,
   Lock,
   Cpu,
+  Clock,
+  Banknote,
   X
 } from "lucide-react";
 import Link from "next/link";
@@ -388,20 +390,41 @@ function TransactionsContent() {
       accessorKey: "paymentMethod",
       header: "Payment Method",
       cell: (info: any) => {
-        const method = String(info.getValue() || 'WALLET').toUpperCase();
+        const row = info.row.original;
+        const method = String(info.getValue() || '').toUpperCase();
+        const pStatus = String(row.paymentStatus || '').toUpperCase();
+        const txnType = String(row.transactionType || '').toUpperCase();
+        const service = String(row.service || '').toLowerCase();
+
         let label = "Wallet";
         let badgeStyle = "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200 dark:border-blue-800";
         let Icon = Wallet;
 
-        if (method === 'UPI' || method === 'RAZORPAY_UPI') {
+        if (txnType === 'ADMIN_DEBIT' || service === 'manual_debit' || service === 'admin_debit' || method === 'ADMIN_ADJUSTMENT' || method === 'ADMIN_DEBIT') {
+          label = "Admin Adjustment";
+          badgeStyle = "bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400 border-purple-200 dark:border-purple-800";
+          Icon = ShieldCheck;
+        } else if (pStatus === 'UNPAID' || method === 'NOT_SET' || method === 'NOT_SPECIFIED') {
+          label = "Not Paid";
+          badgeStyle = "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200 dark:border-amber-800";
+          Icon = Clock;
+        } else if (method === 'UPI' || method === 'RAZORPAY_UPI') {
           label = "UPI";
           badgeStyle = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800";
           Icon = QrCode;
+        } else if (method === 'CASH') {
+          label = "Cash";
+          badgeStyle = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800";
+          Icon = Banknote;
+        } else if (method === 'BANK_TRANSFER') {
+          label = "Bank Transfer";
+          badgeStyle = "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800";
+          Icon = Building2;
         } else if (method === 'RAZORPAY') {
           label = "Razorpay";
           badgeStyle = "bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400 border-purple-200 dark:border-purple-800";
           Icon = CreditCard;
-        } else if (method === 'ADMIN' || method === 'ADMIN_CREDIT' || method === 'ADMIN_DEBIT') {
+        } else if (method === 'ADMIN' || method === 'ADMIN_CREDIT') {
           label = "Admin";
           badgeStyle = "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200 dark:border-amber-800";
           Icon = ShieldCheck;
@@ -409,10 +432,6 @@ function TransactionsContent() {
           label = "System";
           badgeStyle = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border-slate-200 dark:border-slate-700";
           Icon = Cpu;
-        } else if (method === 'BANK_TRANSFER') {
-          label = "Bank Transfer";
-          badgeStyle = "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800";
-          Icon = Building2;
         }
 
         return (

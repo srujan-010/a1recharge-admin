@@ -388,13 +388,13 @@ export default function ManualPaymentsPage() {
 
                         {/* PAYMENT METHOD PILL */}
                         <td className="py-3.5 px-4 whitespace-nowrap">
-                          {method !== "NOT_SET" ? (
-                            <span className="px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-800">
-                              {method}
+                          {pStatus === "UNPAID" || method === "NOT_SET" || method === "NOT_SPECIFIED" ? (
+                            <span className="px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800">
+                              Not Paid
                             </span>
                           ) : (
-                            <span className="px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-slate-100 text-slate-400 border border-slate-200">
-                              NOT SET
+                            <span className="px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-800">
+                              {method === "BANK_TRANSFER" ? "Bank Transfer" : method === "CASH" ? "Cash" : method}
                             </span>
                           )}
                         </td>
