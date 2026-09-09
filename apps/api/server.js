@@ -91,7 +91,12 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', server: 'running' });
+  const { getDiagnosticStatus } = require('./config/firebase');
+  res.json({
+    status: 'ok',
+    server: 'running',
+    firebase: getDiagnosticStatus()
+  });
 });
 
 // Root endpoint
