@@ -26,6 +26,286 @@ function getISTDateRanges() {
   return { startOfToday, startOfMonth };
 }
 
+/**
+ * Compute 10-day activity status for a list of retailer userIds using server current time.
+ * Purely read-only calculation, does NOT modify any account status or database records.
+ * Checks Transaction, RechargeTransaction, and WalletLedger (excluding test data and initial 'Account Created').
+ */
+async function getRetailersActivityMap(userIds) {
+  if (!userIds || userIds.length === 0) return {};
+
+  const now = new Date();
+  const tenDaysAgo = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+
+  const [txnAgg, rechargeAgg, ledgerAgg] = await Promise.all([
+    Transaction.aggregate([
+      {
+        $match: {
+          userId: { $in: userIds },
+          isTest: { $ne: true },
+          referenceId: { $not: /^TEST/i }
+        }
+      },
+      {
+        $group: {
+          _id: '$userId',
+          lastActivityAt: { $max: '$createdAt' }
+        }
+      }
+    ]),
+    RechargeTransaction.aggregate([
+      {
+        $match: {
+          userId: { $in: userIds },
+          isTest: { $ne: true },
+          orderId: { $not: /^TEST/i }
+        }
+      },
+      {
+        $group: {
+          _id: '$userId',
+          lastActivityAt: { $max: '$createdAt' }
+        }
+      }
+    ]),
+    WalletLedger.aggregate([
+      {
+        $match: {
+          userId: { $in: userIds },
+          $or: [
+            { amount: { $gt: 0 } },
+            { amountPaise: { $gt: 0 } }
+          ],
+          description: { $not: /Account Created/i },
+          referenceId: { $not: /^TEST/i }
+        }
+      },
+      {
+        $group: {
+          _id: '$userId',
+          lastActivityAt: { $max: '$createdAt' }
+        }
+      }
+    ])
+  ]);
+
+  const txnMap = txnAgg.reduce((acc, t) => { acc[t._id.toString()] = t.lastActivityAt; return acc; }, {});
+  const rechargeMap = rechargeAgg.reduce((acc, r) => { acc[r._id.toString()] = r.lastActivityAt; return acc; }, {});
+  const ledgerMap = ledgerAgg.reduce((acc, l) => { acc[l._id.toString()] = l.lastActivityAt; return acc; }, {});
+
+  const resultMap = {};
+  for (const uid of userIds) {
+    const uidStr = uid.toString();
+    const dates = [
+      txnMap[uidStr],
+      rechargeMap[uidStr],
+      ledgerMap[uidStr]
+    ].filter(Boolean).map(d => new Date(d));
+
+    const lastActivityAt = dates.length > 0 ? new Date(Math.max(...dates.map(d => d.getTime()))) : null;
+    const activityStatus = (lastActivityAt && lastActivityAt >= tenDaysAgo) ? 'ACTIVE' : 'INACTIVE';
+
+    resultMap[uidStr] = {
+      lastActivityAt,
+      activityStatus
+    };
+  }
+
+  return resultMap;
+}
+
+/**
+ * Find userIds with valid transaction activity within the last 10 days.
+ * Excludes test transactions and account creation records.
+ */
+async function getActiveRetailerUserIdsInLast10Days() {
+  const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+
+  const [activeTxnUserIds, activeRechargeUserIds, activeLedgerUserIds] = await Promise.all([
+    Transaction.distinct('userId', {
+      createdAt: { $gte: tenDaysAgo },
+      isTest: { $ne: true },
+      referenceId: { $not: /^TEST/i },
+      userId: { $ne: null }
+    }),
+    RechargeTransaction.distinct('userId', {
+      createdAt: { $gte: tenDaysAgo },
+      isTest: { $ne: true },
+      orderId: { $not: /^TEST/i },
+      userId: { $ne: null }
+    }),
+    WalletLedger.distinct('userId', {
+      createdAt: { $gte: tenDaysAgo },
+      $or: [{ amount: { $gt: 0 } }, { amountPaise: { $gt: 0 } }],
+      description: { $not: /Account Created/i },
+      referenceId: { $not: /^TEST/i },
+      userId: { $ne: null }
+    })
+  ]);
+
+  const activeUserSet = new Set([
+    ...activeTxnUserIds.map(id => id.toString()),
+    ...activeRechargeUserIds.map(id => id.toString()),
+    ...activeLedgerUserIds.map(id => id.toString())
+  ]);
+
+  return Array.from(activeUserSet).map(id => new mongoose.Types.ObjectId(id));
+}
+
+/**
+ * Classifies wallet status strictly based on available balance:
+ * - availableBalance < 0: NEGATIVE_BALANCE
+ * - availableBalance === 0: ZERO_BALANCE
+ * - availableBalance > 0 && availableBalance < 500: LOW_WALLET
+ * - availableBalance >= 500: AVAILABLE
+ */
+function classifyWalletStatus(availableBalance) {
+  const balance = Number(availableBalance ?? 0);
+  if (balance < 0) {
+    return 'NEGATIVE_BALANCE';
+  }
+  if (balance === 0) {
+    return 'ZERO_BALANCE';
+  }
+  if (balance > 0 && balance < 500) {
+    return 'LOW_WALLET';
+  }
+  return 'AVAILABLE';
+}
+
+/**
+ * Calculates global summary statistics across ALL retailers
+ * Completely independent of pagination, limit, or skip.
+ */
+async function calculateRetailersSummary() {
+  const [allRetailers, activeUserIds] = await Promise.all([
+    User.find({ role: 'retailer' })
+      .select('_id status isLocked lockUntil kycStatus accountType shopName businessType gstNumber')
+      .lean(),
+    getActiveRetailerUserIdsInLast10Days()
+  ]);
+
+  const activeSet = new Set(activeUserIds.map(id => id.toString()));
+  const allRetailerIds = allRetailers.map(r => r._id);
+  const wallets = await Wallet.find({ userId: { $in: allRetailerIds } })
+    .select('userId balancePaise onHoldPaise')
+    .lean();
+  const walletMap = new Map(wallets.map(w => [w.userId.toString(), w]));
+
+  const now = new Date();
+  let activeAccounts = 0;
+  let locked = 0;
+  let blocked = 0;
+  let pendingKyc = 0;
+  let activeActivity = 0;
+  let inactiveActivity = 0;
+  let zeroBalance = 0;
+  let lowWallet = 0;
+  let available = 0;
+  let negativeBalance = 0;
+  let totalWalletPaise = 0;
+
+  const zeroBalanceUserIds = [];
+  const lowWalletUserIds = [];
+  const availableUserIds = [];
+  const negativeBalanceUserIds = [];
+  const activeAccountUserIds = [];
+  const lockedUserIds = [];
+  const blockedUserIds = [];
+  const pendingKycUserIds = [];
+
+  for (const r of allRetailers) {
+    const isAccountLocked = Boolean(r.isLocked || (r.lockUntil && new Date(r.lockUntil) > now));
+    const cleanStatus = r.status || 'active';
+    const uidStr = r._id.toString();
+
+    if (isAccountLocked) {
+      locked++;
+      lockedUserIds.push(r._id);
+    }
+    if (cleanStatus === 'blocked') {
+      blocked++;
+      blockedUserIds.push(r._id);
+    }
+    if ((cleanStatus === 'active' || !r.status) && !isAccountLocked) {
+      activeAccounts++;
+      activeAccountUserIds.push(r._id);
+    }
+    if (r.kycStatus === 'pending') {
+      pendingKyc++;
+      pendingKycUserIds.push(r._id);
+    }
+
+    const isActive = activeSet.has(uidStr);
+    if (isActive) {
+      activeActivity++;
+    } else {
+      inactiveActivity++;
+    }
+
+    let normAccountType = r.accountType;
+    if (!normAccountType || !['PERSONAL', 'BUSINESS'].includes(normAccountType.toUpperCase())) {
+      normAccountType = (r.shopName || r.businessType || r.gstNumber) ? 'BUSINESS' : 'PERSONAL';
+    } else {
+      normAccountType = normAccountType.toUpperCase();
+    }
+
+    if (normAccountType !== 'PERSONAL') {
+      const w = walletMap.get(uidStr);
+      const balancePaise = Number(w?.balancePaise || 0);
+      const onHoldPaise = Number(w?.onHoldPaise || 0);
+      const availPaise = balancePaise - onHoldPaise;
+      const availRupees = Number((availPaise / 100).toFixed(2));
+      const wStatus = classifyWalletStatus(availRupees);
+
+      if (wStatus === 'ZERO_BALANCE') {
+        zeroBalance++;
+        zeroBalanceUserIds.push(r._id);
+      } else if (wStatus === 'LOW_WALLET') {
+        lowWallet++;
+        lowWalletUserIds.push(r._id);
+      } else if (wStatus === 'AVAILABLE') {
+        available++;
+        availableUserIds.push(r._id);
+      } else if (wStatus === 'NEGATIVE_BALANCE') {
+        negativeBalance++;
+        negativeBalanceUserIds.push(r._id);
+      }
+
+      totalWalletPaise += availPaise;
+    }
+  }
+
+  const summary = {
+    totalRetailers: allRetailers.length,
+    activeAccounts,
+    activeActivity,
+    inactiveActivity,
+    locked,
+    blocked,
+    pendingKyc,
+    zeroBalance,
+    lowWallet,
+    available,
+    negativeBalance,
+    totalWalletBalance: Number((totalWalletPaise / 100).toFixed(2))
+  };
+
+  const userGroups = {
+    zeroBalanceUserIds,
+    lowWalletUserIds,
+    availableUserIds,
+    negativeBalanceUserIds,
+    activeAccountUserIds,
+    lockedUserIds,
+    blockedUserIds,
+    pendingKycUserIds,
+    activeActivityUserIds: activeUserIds
+  };
+
+  return { summary, userGroups };
+}
+
 // @desc    Get all retailers (Paginated & Searchable)
 // @route   GET /api/admin/retailers
 // @access  Private (Admin)
@@ -36,6 +316,11 @@ const getRetailers = async (req, res, next) => {
     const search = req.query.search || '';
     const status = req.query.status || '';
     const accountType = req.query.accountType || '';
+    const activityStatus = req.query.activityStatus || '';
+    const quickFilter = req.query.quickFilter || '';
+
+    // 1. Calculate global summary across ALL retailers (completely independent of pagination)
+    const { summary, userGroups } = await calculateRetailersSummary();
 
     const query = { role: 'retailer' };
 
@@ -54,7 +339,40 @@ const getRetailers = async (req, res, next) => {
     }
 
     if (status && status !== 'all') {
-      query.status = status;
+      if (status === 'active') {
+        query.$or = [{ status: 'active' }, { status: { $exists: false } }, { status: null }];
+      } else {
+        query.status = status;
+      }
+    }
+
+    if (activityStatus && activityStatus !== 'all') {
+      if (activityStatus.toLowerCase() === 'active') {
+        query._id = { $in: userGroups.activeActivityUserIds };
+      } else if (activityStatus.toLowerCase() === 'inactive') {
+        query._id = { $nin: userGroups.activeActivityUserIds };
+      }
+    }
+
+    if (quickFilter && quickFilter !== 'All') {
+      const qf = quickFilter.toLowerCase();
+      if (qf === 'active accounts' || qf === 'active') {
+        query._id = { $in: userGroups.activeAccountUserIds };
+      } else if (qf === 'active activity') {
+        query._id = { $in: userGroups.activeActivityUserIds };
+      } else if (qf === 'inactive activity') {
+        query._id = { $nin: userGroups.activeActivityUserIds };
+      } else if (qf === 'locked') {
+        query._id = { $in: userGroups.lockedUserIds };
+      } else if (qf === 'pending kyc') {
+        query._id = { $in: userGroups.pendingKycUserIds };
+      } else if (qf === 'blocked') {
+        query._id = { $in: userGroups.blockedUserIds };
+      } else if (qf === 'zero balance') {
+        query._id = { $in: userGroups.zeroBalanceUserIds };
+      } else if (qf === 'low wallet') {
+        query._id = { $in: userGroups.lowWalletUserIds };
+      }
     }
 
     const startIndex = (page - 1) * limit;
@@ -108,11 +426,26 @@ const getRetailers = async (req, res, next) => {
       return acc;
     }, {});
     
-    // Map wallet balances to retailers
+    // Map wallet balances and canonical wallet status to retailers
     const walletMap = wallets.reduce((acc, w) => {
-      acc[w.userId.toString()] = w.balancePaise;
+      const balancePaise = Number(w.balancePaise || 0);
+      const onHoldPaise = Number(w.onHoldPaise || 0);
+      const availableBalancePaise = balancePaise - onHoldPaise;
+      const availableBalance = Number((availableBalancePaise / 100).toFixed(2));
+      const walletStatus = classifyWalletStatus(availableBalance);
+
+      acc[w.userId.toString()] = {
+        balancePaise,
+        onHoldPaise,
+        availableBalancePaise,
+        availableBalance,
+        walletStatus
+      };
       return acc;
     }, {});
+
+    // Compute activity status in parallel for retailers on this page
+    const activityMap = await getRetailersActivityMap(userIds);
 
     const enrichedRetailers = retailers.map(r => {
       let normAccountType = r.accountType;
@@ -121,24 +454,46 @@ const getRetailers = async (req, res, next) => {
       } else {
         normAccountType = normAccountType.toUpperCase();
       }
+
+      const uidStr = r._id.toString();
+      const activityInfo = activityMap[uidStr] || { activityStatus: 'INACTIVE', lastActivityAt: null };
+      const cleanStatus = r.status || 'active';
+      const wInfo = walletMap[uidStr] || {
+        balancePaise: 0,
+        onHoldPaise: 0,
+        availableBalancePaise: 0,
+        availableBalance: 0,
+        walletStatus: 'ZERO_BALANCE'
+      };
+
       return {
         ...r,
+        status: cleanStatus,
+        accountStatus: cleanStatus.toUpperCase(),
+        activityStatus: activityInfo.activityStatus,
+        lastActivityAt: activityInfo.lastActivityAt,
         accountType: normAccountType,
-        walletBalancePaise: walletMap[r._id.toString()] || 0,
-        todaysRechargePaise: statsMap[r._id.toString()]?.todaysRechargePaise || 0,
-        monthlyRechargePaise: statsMap[r._id.toString()]?.monthlyRechargePaise || 0
+        walletBalancePaise: wInfo.balancePaise,
+        availableBalancePaise: wInfo.availableBalancePaise,
+        availableBalance: wInfo.availableBalance,
+        walletStatus: wInfo.walletStatus,
+        todaysRechargePaise: statsMap[uidStr]?.todaysRechargePaise || 0,
+        monthlyRechargePaise: statsMap[uidStr]?.monthlyRechargePaise || 0
       };
     });
 
     res.status(200).json({
       success: true,
       data: enrichedRetailers,
+      retailers: enrichedRetailers,
       pagination: {
         page,
         limit,
         total,
-        pages: Math.ceil(total / limit)
-      }
+        pages: Math.ceil(total / limit),
+        totalPages: Math.ceil(total / limit)
+      },
+      summary
     });
   } catch (error) {
     next(error);
@@ -346,14 +701,38 @@ const getRetailerById = async (req, res, next) => {
       ]
     }).sort({ createdAt: -1 }).lean();
 
+    const activityInfo = (await getRetailersActivityMap([retailer._id]))[retailer._id.toString()] || {
+      activityStatus: 'INACTIVE',
+      lastActivityAt: null
+    };
+    const cleanStatus = retailer.status || 'active';
+
+    const walletDoc = wallet || { balancePaise: 0, onHoldPaise: 0, updatedAt: new Date() };
+    const wBalancePaise = Number(walletDoc.balancePaise || 0);
+    const wOnHoldPaise = Number(walletDoc.onHoldPaise || 0);
+    const wAvailPaise = wBalancePaise - wOnHoldPaise;
+    const wAvailableBalance = Number((wAvailPaise / 100).toFixed(2));
+    const wWalletStatus = classifyWalletStatus(wAvailableBalance);
+
     res.status(200).json({
       success: true,
       data: {
         ...retailer,
+        status: cleanStatus,
+        accountStatus: cleanStatus.toUpperCase(),
+        activityStatus: activityInfo.activityStatus,
+        lastActivityAt: activityInfo.lastActivityAt,
+        availableBalance: wAvailableBalance,
+        walletStatus: wWalletStatus,
         accountType: (retailer.accountType && ['PERSONAL', 'BUSINESS'].includes(retailer.accountType.toUpperCase()))
           ? retailer.accountType.toUpperCase()
           : ((retailer.shopName || retailer.businessType || retailer.gstNumber) ? 'BUSINESS' : 'PERSONAL'),
-        wallet: wallet || { balancePaise: 0, onHoldPaise: 0, updatedAt: new Date() },
+        wallet: {
+          ...walletDoc,
+          availableBalancePaise: wAvailPaise,
+          availableBalance: wAvailableBalance,
+          walletStatus: wWalletStatus
+        },
         kyc: kyc || { status: retailer.kycStatus, documents: [] },
         bank: bank || null,
         recentTransactions: recentTxns,
@@ -855,4 +1234,6 @@ module.exports = {
   resetRetailerSecurity,
   revokeRetailerSessions,
   releaseRetailerHold,
+  classifyWalletStatus,
+  calculateRetailersSummary,
 };

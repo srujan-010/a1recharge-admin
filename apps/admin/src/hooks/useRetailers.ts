@@ -12,8 +12,14 @@ export interface Retailer {
   state?: string;
   accountType?: 'PERSONAL' | 'BUSINESS';
   status: 'active' | 'suspended' | 'blocked';
+  accountStatus?: 'ACTIVE' | 'SUSPENDED' | 'BLOCKED';
+  activityStatus?: 'ACTIVE' | 'INACTIVE';
+  lastActivityAt?: string | null;
   kycStatus: 'pending' | 'verified' | 'rejected' | 'none';
   walletBalancePaise: number;
+  availableBalancePaise?: number;
+  availableBalance?: number;
+  walletStatus?: 'ZERO_BALANCE' | 'LOW_WALLET' | 'AVAILABLE' | 'NEGATIVE_BALANCE';
   todaysRechargePaise?: number;
   monthlyRechargePaise?: number;
   lastLogin?: string;
@@ -33,23 +39,49 @@ export interface Retailer {
   failedLoginAttempts?: number;
 }
 
+export interface RetailersSummary {
+  totalRetailers: number;
+  activeAccounts: number;
+  activeActivity: number;
+  inactiveActivity: number;
+  locked: number;
+  blocked: number;
+  pendingKyc: number;
+  zeroBalance: number;
+  lowWallet: number;
+  available: number;
+  negativeBalance: number;
+  totalWalletBalance: number;
+}
+
 export interface RetailersResponse {
   success: boolean;
   data: Retailer[];
+  retailers?: Retailer[];
   pagination: {
     page: number;
     limit: number;
     total: number;
     pages: number;
+    totalPages?: number;
   };
+  summary?: RetailersSummary;
 }
 
-export function useRetailersList(page = 1, limit = 20, search = '', status = 'all', accountType = 'all') {
+export function useRetailersList(
+  page = 1, 
+  limit = 20, 
+  search = '', 
+  status = 'all', 
+  accountType = 'all', 
+  activityStatus = 'all',
+  quickFilter = 'All'
+) {
   return useQuery({
-    queryKey: ['retailers', page, limit, search, status, accountType],
+    queryKey: ['retailers', page, limit, search, status, accountType, activityStatus, quickFilter],
     queryFn: async () => {
       const { data } = await api.get<RetailersResponse>('/admin/retailers', {
-        params: { page, limit, search, status, accountType }
+        params: { page, limit, search, status, accountType, activityStatus, quickFilter }
       });
       return data;
     },

@@ -14,7 +14,7 @@ import {
 import { useUpdateKycStatus } from "@/hooks/useKyc";
 import { 
   ArrowLeft, Ban, CheckCircle, Wallet, FileText, Building, MapPin, ReceiptText, 
-  Phone, Mail, CreditCard, ShieldCheck, Clock, Download, Eye, AlertCircle, Plus, 
+  Phone, Mail, CreditCard, ShieldCheck, Clock, Download, Eye, AlertCircle, AlertTriangle, Plus, 
   Minus, Send, RefreshCw, Key, Lock, Unlock, Loader2, Copy, Check, Search, Activity, Smartphone, 
   Sparkles, X, TrendingUp, IndianRupee, ArrowUpRight, ArrowDownRight, SmartphoneNfc, 
   MoreVertical, Edit, User, Fingerprint, Calendar, Zap, Layers, Trash2, LogOut, MessageSquare, ShieldAlert
@@ -159,6 +159,17 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
   
   const walletBalance = (retailer.wallet?.balancePaise || 0) / 100;
   const onHoldBalance = (retailer.wallet?.onHoldPaise || 0) / 100;
+  const availableBalance = retailer.availableBalance !== undefined && retailer.availableBalance !== null
+    ? Number(retailer.availableBalance)
+    : (walletBalance - onHoldBalance);
+
+  const walletStatus: 'ZERO_BALANCE' | 'LOW_WALLET' | 'AVAILABLE' | 'NEGATIVE_BALANCE' = retailer.walletStatus || (
+    availableBalance < 0 ? 'NEGATIVE_BALANCE' :
+    availableBalance === 0 ? 'ZERO_BALANCE' :
+    availableBalance < 500 ? 'LOW_WALLET' :
+    'AVAILABLE'
+  );
+
   const recentTxns = retailer.recentTransactions || [];
 
   const filteredTransactions = recentTxns.filter((txn: any) => {
@@ -173,7 +184,11 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
   const insights = [];
   if (isLocked) insights.push({ type: 'error', text: '🔒 Account Locked' });
   if (business.successRate > 95 && business.monthlyRechargePaise > 1000000) insights.push({ type: 'success', text: 'Top Performing Retailer' });
-  if (walletBalance < 500 && retailer.accountType === 'BUSINESS') insights.push({ type: 'warning', text: 'Wallet Balance Running Low' });
+  if (retailer.accountType === 'BUSINESS') {
+    if (walletStatus === 'NEGATIVE_BALANCE') insights.push({ type: 'error', text: '⛔ Negative Wallet Balance' });
+    else if (walletStatus === 'ZERO_BALANCE') insights.push({ type: 'error', text: '🔴 Zero Wallet Balance' });
+    else if (walletStatus === 'LOW_WALLET') insights.push({ type: 'warning', text: '🟠 Low Wallet Balance' });
+  }
   if (business.successRate < 70 && business.failedRecharges > 5) insights.push({ type: 'error', text: 'High Failure Rate Detected' });
   if (retailer.kycStatus === 'pending') insights.push({ type: 'warning', text: 'Pending KYC Verification' });
   if (insights.length === 0) insights.push({ type: 'neutral', text: 'Normal Activity Levels' });
@@ -208,11 +223,60 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                 <div className="flex items-center gap-1.5 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 px-3 py-1 rounded-full font-bold text-xs shadow-sm uppercase tracking-wider">
                   <Lock className="w-3.5 h-3.5" /> Locked
                 </div>
+              ) : retailer.status === 'blocked' ? (
+                <Badge variant="error" className="capitalize px-3 py-1 text-xs shadow-sm">
+                  Blocked
+                </Badge>
+              ) : retailer.status === 'suspended' ? (
+                <Badge variant="warning" className="capitalize px-3 py-1 text-xs shadow-sm">
+                  Suspended
+                </Badge>
               ) : (
-                <Badge variant={retailer.status === 'active' ? 'success' : 'error'} className="capitalize px-3 py-1 text-xs shadow-sm">
-                  {retailer.status}
+                <Badge variant="success" className="capitalize px-3 py-1 text-xs shadow-sm">
+                  Active
                 </Badge>
               )}
+
+              {/* Activity Status Badge */}
+              <div 
+                title={retailer.activityStatus === 'ACTIVE' 
+                  ? `Transaction activity recorded within the last 10 days.${retailer.lastActivityAt ? ` (Last: ${format(new Date(retailer.lastActivityAt), 'dd MMM yyyy, hh:mm a')})` : ''}` 
+                  : `No transaction activity recorded in the last 10 days.`}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold text-xs border shadow-sm cursor-pointer ${
+                  retailer.activityStatus === 'ACTIVE'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5" />
+                <span>Activity: {retailer.activityStatus === 'ACTIVE' ? 'Active' : 'Inactive'}</span>
+              </div>
+
+              {/* Wallet Status Badge for Business */}
+              {retailer.accountType !== 'PERSONAL' && (
+                <div 
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold text-xs border shadow-sm ${
+                    walletStatus === 'ZERO_BALANCE' ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800/60' :
+                    walletStatus === 'LOW_WALLET' ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/60' :
+                    walletStatus === 'NEGATIVE_BALANCE' ? 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border-rose-300' :
+                    'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${
+                    walletStatus === 'ZERO_BALANCE' ? 'bg-rose-500 animate-pulse' :
+                    walletStatus === 'LOW_WALLET' ? 'bg-amber-500' :
+                    walletStatus === 'NEGATIVE_BALANCE' ? 'bg-rose-700' :
+                    'bg-emerald-500'
+                  }`} />
+                  <span>Wallet: {
+                    walletStatus === 'ZERO_BALANCE' ? 'Zero Balance' :
+                    walletStatus === 'LOW_WALLET' ? 'Low Wallet' :
+                    walletStatus === 'NEGATIVE_BALANCE' ? 'Negative Balance' :
+                    'Available'
+                  }</span>
+                </div>
+              )}
+
               <Badge variant={retailer.kycStatus === 'verified' ? 'success' : 'warning'} className="capitalize px-3 py-1 text-xs shadow-sm">
                 KYC {retailer.kycStatus}
               </Badge>
@@ -233,7 +297,10 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
             
             <div className="flex flex-wrap items-center gap-6 text-xs text-slate-500 pt-1">
               <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Member Since: {new Date(retailer.createdAt).toLocaleDateString('en-IN')}</div>
-              <div className="flex items-center gap-1.5"><Smartphone className="w-3.5 h-3.5" /> App Version: v1.2.4</div>
+              <div className="flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-blue-500" /> 
+                Last Activity: {retailer.lastActivityAt ? format(new Date(retailer.lastActivityAt), 'dd MMM yyyy, hh:mm a') : 'Never recorded'}
+              </div>
               <div className="flex items-center gap-1.5"><Zap className="w-3.5 h-3.5" /> Successful Recharges: {business.successfulRecharges || 0}</div>
             </div>
           </div>
@@ -318,8 +385,29 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
             Available Wallet <Wallet className="w-4 h-4 text-indigo-500" />
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
-            {retailer.accountType === 'PERSONAL' ? '—' : `₹${walletBalance.toFixed(2)}`}
+            {retailer.accountType === 'PERSONAL' ? '—' : `₹${availableBalance.toFixed(2)}`}
           </div>
+          {retailer.accountType !== 'PERSONAL' && (
+            <div className="text-[11px] font-semibold">
+              {walletStatus === 'NEGATIVE_BALANCE' ? (
+                <span className="text-rose-700 dark:text-rose-400 inline-flex items-center gap-1.5">
+                  <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" /> Negative Balance
+                </span>
+              ) : walletStatus === 'ZERO_BALANCE' ? (
+                <span className="text-rose-600 dark:text-rose-400 inline-flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" /> Zero Balance
+                </span>
+              ) : walletStatus === 'LOW_WALLET' ? (
+                <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" /> Low Wallet
+                </span>
+              ) : (
+                <span className="text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" /> Available
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Today's Recharge */}

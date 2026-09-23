@@ -27,6 +27,7 @@ export default function RetailersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [accountTypeFilter, setAccountTypeFilter] = useState<string>("all");
   const [kycFilter, setKycFilter] = useState("all");
+  const [activityFilter, setActivityFilter] = useState("all");
   
   // Quick Filter Tabs
   const [quickFilter, setQuickFilter] = useState("All");
@@ -64,7 +65,15 @@ export default function RetailersPage() {
   });
 
   // Hooks
-  const { data, isLoading, isFetching, refetch } = useRetailersList(page, pageSize, search, statusFilter, accountTypeFilter as any);
+  const { data, isLoading, isFetching, refetch } = useRetailersList(
+    page, 
+    pageSize, 
+    search, 
+    statusFilter, 
+    accountTypeFilter as any, 
+    activityFilter,
+    quickFilter
+  );
   const { mutate: updateStatus } = useUpdateRetailerStatus();
   const { mutate: unlockAccount, isPending: isUnlocking } = useUnlockRetailerAccount();
   const { mutate: createRetailer, isPending: isCreating } = useCreateRetailer();
@@ -113,30 +122,36 @@ export default function RetailersPage() {
   const list: Retailer[] = data?.data || [];
   const isAccountLocked = (r: Retailer) => Boolean(r.isLocked || (r.lockUntil && new Date(r.lockUntil) > new Date()));
 
+  // Wallet helpers for canonical classification & decimal-safe money handling
+  const getRetailerAvailableBalance = (r: Retailer): number => {
+    if (r.availableBalance !== undefined && r.availableBalance !== null) {
+      return Number(r.availableBalance);
+    }
+    return (Number(r.walletBalancePaise ?? 0)) / 100;
+  };
+
+  const getRetailerWalletStatus = (r: Retailer): 'ZERO_BALANCE' | 'LOW_WALLET' | 'AVAILABLE' | 'NEGATIVE_BALANCE' => {
+    if (r.walletStatus) return r.walletStatus;
+    const balance = getRetailerAvailableBalance(r);
+    if (balance < 0) return 'NEGATIVE_BALANCE';
+    if (balance === 0) return 'ZERO_BALANCE';
+    if (balance > 0 && balance < 500) return 'LOW_WALLET';
+    return 'AVAILABLE';
+  };
+
   // Filtered List Logic
   const filteredList = useMemo(() => {
-    let result = list.filter(r => kycFilter === 'all' || r.kycStatus === kycFilter);
-    
-    if (quickFilter === 'Active') {
-      result = result.filter(r => r.status === 'active' && !isAccountLocked(r));
-    } else if (quickFilter === 'Locked') {
-      result = result.filter(r => isAccountLocked(r));
-    } else if (quickFilter === 'Pending KYC') {
-      result = result.filter(r => r.kycStatus === 'pending');
-    } else if (quickFilter === 'Blocked') {
-      result = result.filter(r => r.status === 'blocked');
-    } else if (quickFilter === 'Low Wallet') {
-      result = result.filter(r => r.accountType !== 'PERSONAL' && (r.walletBalancePaise || 0) < 50000); // < ₹500
+    let result = list;
+    if (kycFilter !== 'all') {
+      result = result.filter(r => r.kycStatus === kycFilter);
     }
-
     if (statusFilter === 'locked') {
       result = result.filter(r => isAccountLocked(r));
     } else if (statusFilter === 'unlocked') {
       result = result.filter(r => !isAccountLocked(r));
     }
-
     return result;
-  }, [list, kycFilter, quickFilter, statusFilter]);
+  }, [list, kycFilter, statusFilter]);
 
   // Selection Handlers
   const toggleSelectAll = () => {
@@ -154,13 +169,14 @@ export default function RetailersPage() {
   };
 
   // Active Filters Check
-  const hasActiveFilters = search || accountTypeFilter !== 'all' || statusFilter !== 'all' || kycFilter !== 'all' || quickFilter !== 'All';
+  const hasActiveFilters = search || accountTypeFilter !== 'all' || statusFilter !== 'all' || activityFilter !== 'all' || kycFilter !== 'all' || quickFilter !== 'All';
 
   const resetAllFilters = () => {
     setSearch("");
     setSearchInput("");
     setAccountTypeFilter("all");
     setStatusFilter("all");
+    setActivityFilter("all");
     setKycFilter("all");
     setQuickFilter("All");
     setPage(1);
@@ -176,9 +192,9 @@ export default function RetailersPage() {
 
     if (targetData.length === 0) return;
 
-    const headers = ["Retailer ID,Name,Account Type,Phone,Email,Shop Name,City,State,Wallet Balance (INR),Status,KYC Status,Joined Date\n"];
+    const headers = ["Retailer ID,Name,Account Type,Phone,Email,Shop Name,City,State,Available Wallet Balance (INR),Wallet Status,Account Status,Activity Status,Last Activity,KYC Status,Joined Date\n"];
     const rows = targetData.map(r => 
-      `"${r.retailerId}","${r.name}","${r.accountType || 'PERSONAL'}","${r.phone}","${r.email || ''}","${r.shopName || ''}","${r.city || ''}","${r.state || ''}","${(r.walletBalancePaise / 100).toFixed(2)}","${r.status}","${r.kycStatus}","${r.createdAt ? format(new Date(r.createdAt), 'yyyy-MM-dd') : ''}"\n`
+      `"${r.retailerId}","${r.name}","${r.accountType || 'PERSONAL'}","${r.phone}","${r.email || ''}","${r.shopName || ''}","${r.city || ''}","${r.state || ''}","${getRetailerAvailableBalance(r).toFixed(2)}","${getRetailerWalletStatus(r)}","${(r.status || 'active').toUpperCase()}","${r.activityStatus || 'INACTIVE'}","${r.lastActivityAt ? format(new Date(r.lastActivityAt), 'yyyy-MM-dd HH:mm') : 'Never'}","${r.kycStatus}","${r.createdAt ? format(new Date(r.createdAt), 'yyyy-MM-dd') : ''}"\n`
     );
 
     const blob = new Blob([...headers, ...rows], { type: 'text/csv' });
@@ -190,17 +206,18 @@ export default function RetailersPage() {
     showToast(`Exported ${targetData.length} retailers to ${formatType.toUpperCase()}`);
   };
   
-  // Summary Stats Calculations
-  const totalRetailers = data?.pagination?.total || 0;
-  const activeCount = list.filter(r => r.status === 'active' && !isAccountLocked(r)).length;
-  const lockedCount = list.filter(r => isAccountLocked(r)).length;
-  const pendingKycCount = list.filter(r => r.kycStatus === 'pending').length;
-  const blockedCount = list.filter(r => r.status === 'blocked').length;
-  const lowWalletCount = list.filter(r => r.accountType !== 'PERSONAL' && (r.walletBalancePaise || 0) < 50000).length;
-  
-  const totalWalletBal = list
-    .filter(r => r.accountType !== 'PERSONAL')
-    .reduce((acc, r) => acc + (r.walletBalancePaise || 0), 0) / 100;
+  // Summary Stats Calculations (Global dataset across ALL retailers, independent of pagination)
+  const summary = data?.summary;
+  const totalRetailers = summary?.totalRetailers ?? data?.pagination?.total ?? 0;
+  const activeAccountCount = summary?.activeAccounts ?? 0;
+  const activeActivityCount = summary?.activeActivity ?? 0;
+  const inactiveActivityCount = summary?.inactiveActivity ?? 0;
+  const lockedCount = summary?.locked ?? 0;
+  const pendingKycCount = summary?.pendingKyc ?? 0;
+  const blockedCount = summary?.blocked ?? 0;
+  const zeroBalanceCount = summary?.zeroBalance ?? 0;
+  const lowWalletCount = summary?.lowWallet ?? 0;
+  const totalWalletBal = summary?.totalWalletBalance ?? 0;
 
   return (
     <div className="space-y-6 max-w-full mx-auto pb-20 animate-in fade-in duration-200 font-sans text-slate-900 dark:text-slate-100">
@@ -280,8 +297,8 @@ export default function RetailersPage() {
         </div>
       </div>
       
-      {/* 6 Clean Summary Statistics Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+      {/* Summary Statistics Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3.5">
         
         {/* Total Retailers */}
         <div 
@@ -294,37 +311,67 @@ export default function RetailersPage() {
         >
           <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Total Retailers</span>
           <p className="text-2xl font-bold font-sans text-slate-900 dark:text-white mt-1">{totalRetailers}</p>
-          <span className="text-xs font-normal text-slate-500">{activeCount} active</span>
+          <span className="text-xs font-normal text-slate-500">{activeAccountCount} active accounts</span>
         </div>
 
-        {/* Active */}
+        {/* Active Accounts */}
         <div 
-          onClick={() => { setQuickFilter("Active"); setPage(1); }}
+          onClick={() => { setQuickFilter("Active Accounts"); setPage(1); }}
           className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
-            quickFilter === 'Active'
+            quickFilter === 'Active Accounts' || quickFilter === 'Active'
               ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'
               : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
           }`}
         >
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Active</span>
-          <p className="text-2xl font-bold font-sans text-emerald-600 dark:text-emerald-400 mt-1">{activeCount}</p>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Active Accounts</span>
+          <p className="text-2xl font-bold font-sans text-emerald-600 dark:text-emerald-400 mt-1">{activeAccountCount}</p>
           <span className="text-xs font-normal text-slate-500">
-            {totalRetailers > 0 ? Math.round((activeCount / totalRetailers) * 100) : 0}% of total
+            {totalRetailers > 0 ? Math.round((activeAccountCount / totalRetailers) * 100) : 0}% of accounts
           </span>
         </div>
 
-        {/* Pending KYC */}
+        {/* Active Activity (10-Day Transaction Activity) */}
         <div 
-          onClick={() => { setQuickFilter("Pending KYC"); setPage(1); }}
+          onClick={() => { setQuickFilter("Active Activity"); setPage(1); }}
           className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
-            quickFilter === 'Pending KYC'
+            quickFilter === 'Active Activity'
+              ? 'bg-indigo-50/60 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-800'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Active (10 Days)</span>
+          <p className="text-2xl font-bold font-sans text-indigo-600 dark:text-indigo-400 mt-1">{activeActivityCount}</p>
+          <span className="text-xs font-normal text-slate-500">
+            {inactiveActivityCount} inactive by activity
+          </span>
+        </div>
+
+        {/* Zero Balance */}
+        <div 
+          onClick={() => { setQuickFilter("Zero Balance"); setPage(1); }}
+          className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
+            quickFilter === 'Zero Balance'
+              ? 'bg-rose-50/60 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+          }`}
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-500">Zero Balance</span>
+          <p className="text-2xl font-bold font-sans text-rose-600 dark:text-rose-400 mt-1">{zeroBalanceCount}</p>
+          <span className="text-xs font-normal text-slate-500">₹0.00 available</span>
+        </div>
+
+        {/* Low Wallet */}
+        <div 
+          onClick={() => { setQuickFilter("Low Wallet"); setPage(1); }}
+          className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
+            quickFilter === 'Low Wallet'
               ? 'bg-amber-50/60 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
               : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
           }`}
         >
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Pending KYC</span>
-          <p className="text-2xl font-bold font-sans text-amber-600 dark:text-amber-400 mt-1">{pendingKycCount}</p>
-          <span className="text-xs font-normal text-slate-500">Requires review</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-500">Low Wallet</span>
+          <p className="text-2xl font-bold font-sans text-amber-600 dark:text-amber-400 mt-1">{lowWalletCount}</p>
+          <span className="text-xs font-normal text-slate-500">&gt; ₹0 and &lt; ₹500</span>
         </div>
 
         {/* Blocked */}
@@ -339,20 +386,6 @@ export default function RetailersPage() {
           <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Blocked</span>
           <p className="text-2xl font-bold font-sans text-rose-600 dark:text-rose-400 mt-1">{blockedCount}</p>
           <span className="text-xs font-normal text-slate-500">Restricted</span>
-        </div>
-
-        {/* Low Wallet */}
-        <div 
-          onClick={() => { setQuickFilter("Low Wallet"); setPage(1); }}
-          className={`p-3.5 rounded-xl border transition-colors cursor-pointer ${
-            quickFilter === 'Low Wallet'
-              ? 'bg-amber-50/60 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
-          }`}
-        >
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Low Wallet</span>
-          <p className="text-2xl font-bold font-sans text-amber-600 dark:text-amber-400 mt-1">{lowWalletCount}</p>
-          <span className="text-xs font-normal text-slate-500">&lt; ₹500 balance</span>
         </div>
 
         {/* Total Wallet Balance */}
@@ -370,11 +403,14 @@ export default function RetailersPage() {
       <div className="border-b border-slate-200 dark:border-slate-800 flex items-center gap-6 overflow-x-auto custom-scrollbar text-xs font-medium">
         {[
           { id: 'All', label: `All (${totalRetailers})` },
-          { id: 'Active', label: `Active (${activeCount})` },
-          { id: 'Locked', label: `Locked (${lockedCount})` },
+          { id: 'Active Accounts', label: `Active Accounts (${activeAccountCount})` },
+          { id: 'Active Activity', label: `Active Activity (${activeActivityCount})` },
+          { id: 'Inactive Activity', label: `Inactive Activity (${inactiveActivityCount})` },
           { id: 'Pending KYC', label: `Pending KYC (${pendingKycCount})` },
-          { id: 'Blocked', label: `Blocked (${blockedCount})` },
+          { id: 'Zero Balance', label: `Zero Balance (${zeroBalanceCount})` },
           { id: 'Low Wallet', label: `Low Wallet (${lowWalletCount})` },
+          { id: 'Blocked', label: `Blocked (${blockedCount})` },
+          { id: 'Locked', label: `Locked (${lockedCount})` },
         ].map(tab => (
           <button
             key={tab.id}
@@ -425,18 +461,29 @@ export default function RetailersPage() {
               <option value="BUSINESS">Business</option>
             </select>
 
-            {/* Status Filter */}
+            {/* Account Status Filter */}
             <select
               value={statusFilter}
               onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
               className="h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="all">Status: All</option>
+              <option value="all">Account Status: All</option>
               <option value="active">Active</option>
               <option value="locked">Locked</option>
               <option value="unlocked">Unlocked</option>
               <option value="suspended">Suspended</option>
               <option value="blocked">Blocked</option>
+            </select>
+
+            {/* 10-Day Activity Status Filter */}
+            <select
+              value={activityFilter}
+              onChange={(e) => { setActivityFilter(e.target.value); setPage(1); }}
+              className="h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="all">Activity: All</option>
+              <option value="active">Active Activity</option>
+              <option value="inactive">Inactive Activity</option>
             </select>
 
             {/* KYC Filter */}
@@ -520,8 +567,14 @@ export default function RetailersPage() {
             )}
             {statusFilter !== 'all' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-medium">
-                Status: {statusFilter}
+                Account Status: {statusFilter}
                 <X className="w-3 h-3 cursor-pointer text-slate-400 hover:text-slate-600" onClick={() => setStatusFilter("all")} />
+              </span>
+            )}
+            {activityFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-medium">
+                Activity: {activityFilter === 'active' ? 'Active Activity' : 'Inactive Activity'}
+                <X className="w-3 h-3 cursor-pointer text-indigo-500 hover:text-indigo-700" onClick={() => setActivityFilter("all")} />
               </span>
             )}
             {kycFilter !== 'all' && (
@@ -560,7 +613,8 @@ export default function RetailersPage() {
                 <th className="py-3 px-4 text-right">Today's Recharge</th>
                 <th className="py-3 px-4 text-right">Monthly Recharge</th>
                 <th className="py-3 px-4 text-center">Device</th>
-                <th className="py-3 px-4 text-center">Status</th>
+                <th className="py-3 px-4 text-center">Account Status</th>
+                <th className="py-3 px-4 text-center">Activity</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -576,12 +630,13 @@ export default function RetailersPage() {
                     <td className="py-3.5 px-4 text-right"><div className="w-16 h-4 bg-slate-200 dark:bg-slate-800 rounded ml-auto" /></td>
                     <td className="py-3.5 px-4 text-center"><div className="w-14 h-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
                     <td className="py-3.5 px-4 text-center"><div className="w-16 h-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
+                    <td className="py-3.5 px-4 text-center"><div className="w-16 h-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
                     <td className="py-3.5 px-4 text-right"><div className="w-14 h-7 bg-slate-200 dark:bg-slate-800 rounded ml-auto" /></td>
                   </tr>
                 ))
               ) : filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center">
+                  <td colSpan={10} className="py-12 text-center">
                     <div className="flex flex-col items-center justify-center space-y-2">
                       <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center">
                         <Users className="w-5 h-5" />
@@ -601,7 +656,8 @@ export default function RetailersPage() {
               ) : (
                 filteredList.map((retailer) => {
                   const isSelected = selectedIds.includes(retailer._id);
-                  const isLowWallet = retailer.accountType !== 'PERSONAL' && (retailer.walletBalancePaise || 0) < 50000;
+                  const wStatus = getRetailerWalletStatus(retailer);
+                  const availableBal = getRetailerAvailableBalance(retailer);
 
                   return (
                     <tr 
@@ -665,15 +721,29 @@ export default function RetailersPage() {
                         ) : (
                           <div>
                             <div className="font-semibold text-sm text-slate-900 dark:text-white">
-                              ₹{(retailer.walletBalancePaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              ₹{availableBal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
-                            <div className="text-[11px] font-normal whitespace-nowrap">
-                              {isLowWallet ? (
-                                <span className="text-amber-600 dark:text-amber-400 font-semibold inline-flex items-center gap-1 justify-end whitespace-nowrap">
-                                  <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" /> Low Wallet
+                            <div className="text-[11px] font-semibold whitespace-nowrap mt-0.5">
+                              {wStatus === 'ZERO_BALANCE' ? (
+                                <span className="text-rose-600 dark:text-rose-400 inline-flex items-center gap-1.5 justify-end">
+                                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
+                                  <span>Zero Balance</span>
+                                </span>
+                              ) : wStatus === 'LOW_WALLET' ? (
+                                <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1.5 justify-end">
+                                  <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                                  <span>Low Wallet</span>
+                                </span>
+                              ) : wStatus === 'NEGATIVE_BALANCE' ? (
+                                <span className="text-rose-700 dark:text-rose-400 inline-flex items-center gap-1.5 justify-end">
+                                  <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
+                                  <span>Negative Balance</span>
                                 </span>
                               ) : (
-                                <span className="text-slate-400">Available</span>
+                                <span className="text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1.5 justify-end">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                                  <span>Available</span>
+                                </span>
                               )}
                             </div>
                           </div>
@@ -716,22 +786,61 @@ export default function RetailersPage() {
                             <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 dark:text-rose-400">
                               <Lock className="w-3 h-3 text-rose-500" /> Locked
                             </span>
-                          ) : retailer.status === 'active' ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active
-                            </span>
                           ) : retailer.status === 'blocked' ? (
                             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
                               <span className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Blocked
                             </span>
-                          ) : (
+                          ) : retailer.status === 'suspended' ? (
                             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Suspended
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Active
                             </span>
                           )}
                           <span className="text-[10px] text-slate-400 font-normal mt-0.5">
                             {retailer.lastLogin ? formatDistanceToNow(new Date(retailer.lastLogin), { addSuffix: true }) : 'Never logged in'}
                           </span>
+                        </div>
+                      </td>
+
+                      {/* 10-Day Transaction Activity Status */}
+                      <td className="py-3.5 px-4 text-center align-middle">
+                        <div className="relative group inline-block">
+                          {retailer.activityStatus === 'ACTIVE' ? (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 cursor-pointer shadow-sm">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                              <span>Active</span>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 cursor-pointer shadow-sm">
+                              <span className="w-2 h-2 rounded-full bg-slate-400 dark:bg-slate-500" />
+                              <span>Inactive</span>
+                            </div>
+                          )}
+
+                          {/* Activity Tooltip */}
+                          <div className="opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity duration-150 absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2.5 bg-slate-900 text-white text-[11px] rounded-lg shadow-xl border border-slate-800 text-left">
+                            <div className="font-semibold flex items-center gap-1.5 mb-1">
+                              <Activity className="w-3.5 h-3.5 text-blue-400" />
+                              <span>Activity: {retailer.activityStatus === 'ACTIVE' ? 'Active' : 'Inactive'}</span>
+                            </div>
+                            <p className="text-slate-300 leading-tight mb-1.5">
+                              {retailer.activityStatus === 'ACTIVE'
+                                ? "Transaction activity recorded within the last 10 days."
+                                : "No transaction activity recorded in the last 10 days."}
+                            </p>
+                            <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-800 flex items-center justify-between">
+                              <span>Last activity:</span>
+                              <span className="font-mono text-slate-200">
+                                {retailer.lastActivityAt
+                                  ? format(new Date(retailer.lastActivityAt), 'dd MMM yyyy, hh:mm a')
+                                  : 'Never recorded'}
+                              </span>
+                            </div>
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-900" />
+                          </div>
                         </div>
                       </td>
 
@@ -777,7 +886,7 @@ export default function RetailersPage() {
                                       showToast("Wallet adjustment disabled for blocked retailers", true);
                                       return;
                                     }
-                                    setAdjustmentTarget({ id: retailer._id, name: retailer.name, type: "credit", currentBalanceRupees: (retailer.walletBalancePaise || 0) / 100 });
+                                    setAdjustmentTarget({ id: retailer._id, name: retailer.name, type: "credit", currentBalanceRupees: availableBal });
                                   }}
                                   disabled={retailer.status === 'blocked'}
                                   className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md ${
@@ -882,9 +991,36 @@ export default function RetailersPage() {
               <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <div>
                   <span className="text-[10px] text-slate-400 uppercase font-semibold">Wallet</span>
-                  <p className="font-semibold font-mono text-slate-900 dark:text-white">
-                    {r.accountType === 'PERSONAL' ? '—' : `₹${(r.walletBalancePaise / 100).toFixed(2)}`}
-                  </p>
+                  {r.accountType === 'PERSONAL' ? (
+                    <p className="font-semibold font-mono text-slate-400">—</p>
+                  ) : (() => {
+                    const wStatus = getRetailerWalletStatus(r);
+                    const bal = getRetailerAvailableBalance(r);
+                    return (
+                      <div>
+                        <p className="font-semibold font-mono text-slate-900 dark:text-white">
+                          ₹{bal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                        <span className={`text-[10px] font-semibold inline-flex items-center gap-1 mt-0.5 ${
+                          wStatus === 'ZERO_BALANCE' ? 'text-rose-600 dark:text-rose-400' :
+                          wStatus === 'LOW_WALLET' ? 'text-amber-600 dark:text-amber-400' :
+                          wStatus === 'NEGATIVE_BALANCE' ? 'text-rose-700 dark:text-rose-400' :
+                          'text-emerald-600 dark:text-emerald-400'
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            wStatus === 'ZERO_BALANCE' ? 'bg-rose-500' :
+                            wStatus === 'LOW_WALLET' ? 'bg-amber-500' :
+                            wStatus === 'NEGATIVE_BALANCE' ? 'bg-rose-700' :
+                            'bg-emerald-500'
+                          }`} />
+                          {wStatus === 'ZERO_BALANCE' ? 'Zero Balance' :
+                           wStatus === 'LOW_WALLET' ? 'Low Wallet' :
+                           wStatus === 'NEGATIVE_BALANCE' ? 'Negative Balance' :
+                           'Available'}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-400 uppercase font-semibold">Today</span>
@@ -895,9 +1031,27 @@ export default function RetailersPage() {
               </div>
 
               <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
-                <span className={`text-[11px] font-semibold ${r.status === 'active' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                  ● {(r.status || 'active').toUpperCase()}
-                </span>
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[11px] font-semibold ${
+                      r.status === 'blocked' ? 'text-rose-600' :
+                      r.status === 'suspended' ? 'text-amber-600' :
+                      isAccountLocked(r) ? 'text-rose-600' : 'text-emerald-600'
+                    }`}>
+                      ● {(isAccountLocked(r) ? 'LOCKED' : r.status || 'ACTIVE').toUpperCase()}
+                    </span>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                      r.activityStatus === 'ACTIVE' 
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 font-semibold' 
+                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                    }`}>
+                      Activity: {r.activityStatus || 'INACTIVE'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    Last activity: {r.lastActivityAt ? format(new Date(r.lastActivityAt), 'dd MMM yyyy, hh:mm a') : 'None recorded'}
+                  </span>
+                </div>
                 <Link href={`/dashboard/retailers/${r._id}`}>
                   <Button size="sm" className="h-7 px-3 text-xs font-semibold bg-blue-600 text-white rounded-md">View Details</Button>
                 </Link>
