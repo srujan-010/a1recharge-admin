@@ -50,7 +50,7 @@ export function useManualAdjustment() {
       type,
       amountPaise,
       reason,
-      paymentMethod = 'UPI',
+      paymentMethod,
       paymentStatus = 'PAID',
       referenceId,
       idempotencyKey
@@ -59,14 +59,15 @@ export function useManualAdjustment() {
       type: 'credit' | 'debit';
       amountPaise: number;
       reason: string;
-      paymentMethod?: string;
+      paymentMethod?: string | null;
       paymentStatus?: string;
       referenceId?: string;
       idempotencyKey?: string;
     }) => {
+      const resolvedPaymentMethod = paymentStatus === 'UNPAID' ? null : (paymentMethod || null);
       const { data } = await api.post(
         `/admin/wallets/${userId}/adjust`,
-        { type, amountPaise, reason, paymentMethod, paymentStatus, referenceId },
+        { type, amountPaise, reason, paymentMethod: resolvedPaymentMethod, paymentStatus, referenceId },
         { headers: { 'Idempotency-Key': idempotencyKey || referenceId || `adj_${userId}_${Date.now()}` } }
       );
       return data;

@@ -34,6 +34,7 @@ export interface TransactionEntry {
   operatorName?: string;
   apiReference?: string;
   paymentMethod: string;
+  paymentStatus?: 'PAID' | 'UNPAID' | string;
   source: string;
   performedBy?: string;
   adminName?: string;

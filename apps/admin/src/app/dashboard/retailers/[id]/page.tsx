@@ -625,8 +625,8 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
               const isPaid = (p.paymentStatus === 'PAID' || p.status === 'PAID' || p.status === 'VERIFIED');
               const isReversed = p.isReversed || p.walletStatus === 'REVERSED';
               const methodDisplay = isPaid 
-                ? (p.paymentMethod === 'NOT_SET' || !p.paymentMethod ? 'UPI' : p.paymentMethod)
-                : 'Payment method: Not confirmed';
+                ? (p.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : p.paymentMethod === 'CASH' ? 'Cash' : p.paymentMethod === 'UPI' ? 'UPI' : p.paymentMethod === 'OTHER' ? 'Other' : (p.paymentMethod && p.paymentMethod !== 'NOT_SET' ? p.paymentMethod : 'Not Paid'))
+                : 'Not Paid';
               const addedByName = p.createdByName || p.createdBy?.name || 'Super Admin';
               const paymentDateStr = format(new Date(p.paymentDate || p.createdAt), "dd MMM yyyy, hh:mm a");
 
@@ -722,8 +722,8 @@ export default function RetailerProfilePage({ params }: { params: Promise<{ id: 
                     const isPaid = (p.paymentStatus === 'PAID' || p.status === 'PAID' || p.status === 'VERIFIED');
                     const isReversed = p.isReversed || p.walletStatus === 'REVERSED';
                     const methodDisplay = isPaid 
-                      ? (p.paymentMethod === 'NOT_SET' || !p.paymentMethod ? 'UPI' : p.paymentMethod)
-                      : 'Not confirmed';
+                      ? (p.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : p.paymentMethod === 'CASH' ? 'Cash' : p.paymentMethod === 'UPI' ? 'UPI' : p.paymentMethod === 'OTHER' ? 'Other' : (p.paymentMethod && p.paymentMethod !== 'NOT_SET' ? p.paymentMethod : 'Not Paid'))
+                      : 'Not Paid';
                     return (
                       <tr key={p._id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
                         <td className="py-2.5 px-3 font-mono">{format(new Date(p.paymentDate || p.createdAt), "dd MMM, hh:mm a")}</td>

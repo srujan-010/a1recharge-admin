@@ -17,7 +17,7 @@ export interface ManualPaymentItem {
   retailerPhone?: string;
   amountPaise: number;
   amount: number;
-  paymentMethod: 'UPI' | 'BANK_TRANSFER' | 'CASH' | 'OTHER' | 'NOT_SET';
+  paymentMethod: 'UPI' | 'BANK_TRANSFER' | 'CASH' | 'OTHER' | 'NOT_SET' | null;
   paymentStatus: 'PAID' | 'UNPAID' | 'NOT_SET';
   walletStatus: 'CREDITED' | 'REVERSED';
   status: 'PENDING' | 'RECEIVED' | 'VERIFIED' | 'REJECTED' | 'CANCELLED' | 'PAID' | 'UNPAID';
@@ -174,7 +174,7 @@ export function useManualPaymentDetails(id: string) {
 export function useUpdatePaymentStatus() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, paymentStatus, paymentMethod }: { id: string; paymentStatus: 'PAID' | 'UNPAID'; paymentMethod?: string }) => {
+    mutationFn: async ({ id, paymentStatus, paymentMethod }: { id: string; paymentStatus: 'PAID' | 'UNPAID'; paymentMethod?: string | null }) => {
       const { data } = await api.post(`/admin/wallets/transactions/${id}/payment-status`, { paymentStatus, paymentMethod });
       return data;
     },

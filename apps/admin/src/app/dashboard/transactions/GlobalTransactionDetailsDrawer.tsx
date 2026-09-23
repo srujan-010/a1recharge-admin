@@ -123,11 +123,17 @@ export function GlobalTransactionDetailsDrawer({
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 mt-1 uppercase">
                 {transaction.transactionType === 'ADMIN_DEBIT' || transaction.service === 'manual_debit' || transaction.paymentMethod === 'ADMIN_ADJUSTMENT' || transaction.paymentMethod === 'ADMIN_DEBIT'
                   ? 'Admin Adjustment'
-                  : transaction.paymentStatus === 'UNPAID' || transaction.paymentMethod === 'NOT_SET' || transaction.paymentMethod === 'NOT_SPECIFIED'
+                  : transaction.paymentStatus === 'UNPAID' || !transaction.paymentMethod || transaction.paymentMethod === 'NOT_SET' || transaction.paymentMethod === 'NOT_SPECIFIED'
                   ? 'Not Paid'
                   : transaction.paymentMethod === 'BANK_TRANSFER'
                   ? 'Bank Transfer'
-                  : transaction.paymentMethod || 'WALLET'}
+                  : transaction.paymentMethod === 'CASH'
+                  ? 'Cash'
+                  : transaction.paymentMethod === 'UPI'
+                  ? 'UPI'
+                  : transaction.paymentMethod === 'OTHER'
+                  ? 'Other'
+                  : transaction.paymentMethod}
               </span>
             </div>
           </div>

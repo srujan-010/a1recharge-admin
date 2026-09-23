@@ -83,8 +83,8 @@ export function ManualAdjustmentModal({
     const amountPaise = Math.round(numAmount * 100);
     const idempotencyKey = `ADM_${type.toUpperCase()}_${activeUserId}_${Date.now()}`;
 
-    // UNPAID does NOT require paymentMethod
-    const finalMethod = type === "credit" ? (paymentStatus === "PAID" ? paymentMethod : undefined) : "ADMIN_ADJUSTMENT";
+    // UNPAID sends paymentMethod: null
+    const finalMethod = type === "credit" ? (paymentStatus === "PAID" ? paymentMethod : null) : "ADMIN_ADJUSTMENT";
 
     adjustWallet(
       {
@@ -282,7 +282,7 @@ export function ManualAdjustmentModal({
                   </label>
                   <select
                     value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as any)}
+                    onChange={(e) => setPaymentMethod(e.target.value as "UPI" | "CASH" | "BANK_TRANSFER" | "OTHER")}
                     className="w-full h-9 px-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     <option value="UPI">UPI</option>
@@ -297,7 +297,7 @@ export function ManualAdjustmentModal({
                     Payment Method
                   </label>
                   <div className="h-9 px-3 bg-slate-100/80 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-medium">
-                    <span>Not Paid — Payment not confirmed</span>
+                    <span>Payment not confirmed</span>
                     <span className="text-[10px] text-amber-600 font-bold uppercase">Disabled</span>
                   </div>
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 font-normal mt-0.5">

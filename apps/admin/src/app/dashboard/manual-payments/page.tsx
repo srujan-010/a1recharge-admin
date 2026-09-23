@@ -91,15 +91,18 @@ export default function ManualPaymentsPage() {
 
   const handleConfirmStatusChange = () => {
     if (!selectedPayment) return;
-    if (targetStatus === "PAID" && (selectedPayment.paymentMethod === "NOT_SET" || !selectedPayment.paymentMethod) && !targetMethod) {
-      toast.error("Please select a payment method for a paid payment.");
-      return;
+    if (targetStatus === "PAID") {
+      const methodToUse = targetMethod || (selectedPayment.paymentMethod && selectedPayment.paymentMethod !== "NOT_SET" ? selectedPayment.paymentMethod : null);
+      if (!methodToUse) {
+        toast.error("Please select a payment method for a paid payment.");
+        return;
+      }
     }
     updateStatusMutation.mutate(
       {
         id: selectedPayment.walletTransactionId?._id || selectedPayment.walletTransactionId || selectedPayment._id,
         paymentStatus: targetStatus,
-        paymentMethod: targetStatus === "PAID" ? (targetMethod || selectedPayment.paymentMethod || "UPI") : undefined
+        paymentMethod: targetStatus === "PAID" ? (targetMethod || (selectedPayment.paymentMethod && selectedPayment.paymentMethod !== "NOT_SET" ? selectedPayment.paymentMethod : null)) : null
       },
       {
         onSuccess: () => {
@@ -388,13 +391,13 @@ export default function ManualPaymentsPage() {
 
                         {/* PAYMENT METHOD PILL */}
                         <td className="py-3.5 px-4 whitespace-nowrap">
-                          {pStatus === "UNPAID" || method === "NOT_SET" || method === "NOT_SPECIFIED" ? (
+                          {pStatus !== "PAID" || !item.paymentMethod || method === "NOT_SET" ? (
                             <span className="px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-amber-50 text-amber-600 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800">
                               Not Paid
                             </span>
                           ) : (
                             <span className="px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-800">
-                              {method === "BANK_TRANSFER" ? "Bank Transfer" : method === "CASH" ? "Cash" : method}
+                              {method === "BANK_TRANSFER" ? "Bank Transfer" : method === "CASH" ? "Cash" : method === "UPI" ? "UPI" : method === "OTHER" ? "Other" : method}
                             </span>
                           )}
                         </td>
@@ -483,7 +486,11 @@ export default function ManualPaymentsPage() {
                                   <button
                                     onClick={() => {
                                       setSelectedPayment(item);
-                                      setTargetMethod((item.paymentMethod as any) || "UPI");
+                                      if (item.paymentMethod && item.paymentMethod !== "NOT_SET") {
+                                        setTargetMethod(item.paymentMethod as "UPI" | "CASH" | "BANK_TRANSFER" | "OTHER");
+                                      } else {
+                                        setTargetMethod("UPI");
+                                      }
                                       setIsChangeMethodModalOpen(true);
                                       setActiveMenuId(null);
                                     }}
@@ -610,7 +617,19 @@ export default function ManualPaymentsPage() {
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800/60">
                 <span className="text-slate-500">Payment Method</span>
-                <span className="font-semibold text-slate-900 dark:text-white">{selectedPayment.paymentMethod}</span>
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {selectedPayment.paymentStatus === 'UNPAID' || !selectedPayment.paymentMethod || selectedPayment.paymentMethod === 'NOT_SET'
+                    ? 'Not Paid'
+                    : selectedPayment.paymentMethod === 'BANK_TRANSFER'
+                    ? 'Bank Transfer'
+                    : selectedPayment.paymentMethod === 'CASH'
+                    ? 'Cash'
+                    : selectedPayment.paymentMethod === 'UPI'
+                    ? 'UPI'
+                    : selectedPayment.paymentMethod === 'OTHER'
+                    ? 'Other'
+                    : selectedPayment.paymentMethod}
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800/60">
                 <span className="text-slate-500">Payment Status</span>
@@ -679,7 +698,7 @@ export default function ManualPaymentsPage() {
                 <label className="font-medium text-slate-700 dark:text-slate-300">Select Payment Status</label>
                 <select
                   value={targetStatus}
-                  onChange={(e) => setTargetStatus(e.target.value as any)}
+                  onChange={(e) => setTargetStatus(e.target.value as "PAID" | "UNPAID")}
                   className="w-full h-9 px-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md font-medium text-xs"
                 >
                   <option value="PAID">PAID (Payment Confirmed)</option>
@@ -692,7 +711,7 @@ export default function ManualPaymentsPage() {
                   <label className="font-medium text-slate-700 dark:text-slate-300">Select Payment Method *</label>
                   <select
                     value={targetMethod}
-                    onChange={(e) => setTargetMethod(e.target.value as any)}
+                    onChange={(e) => setTargetMethod(e.target.value as "UPI" | "CASH" | "BANK_TRANSFER" | "OTHER")}
                     className="w-full h-9 px-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md font-medium text-xs font-semibold"
                   >
                     <option value="UPI">UPI</option>
@@ -737,7 +756,7 @@ export default function ManualPaymentsPage() {
               <label className="font-medium text-slate-700 dark:text-slate-300">Select Payment Method</label>
               <select
                 value={targetMethod}
-                onChange={(e) => setTargetMethod(e.target.value as any)}
+                onChange={(e) => setTargetMethod(e.target.value as "UPI" | "CASH" | "BANK_TRANSFER" | "OTHER")}
                 className="w-full h-9 px-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md font-medium text-xs"
               >
                 <option value="UPI">UPI</option>
