@@ -191,14 +191,24 @@ export function useSendWhatsAppCampaign() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload: {
-      recipients: 'ALL' | 'MULTIPLE' | 'SINGLE';
+      recipients: string;
       targetMobile?: string;
+      singleRetailerId?: string;
       messageId: number;
       templateId?: string;
       variablesValues?: string | string[];
       mediaUrl?: string;
       documentFilename?: string;
-      filters?: { state?: string; district?: string; kycStatus?: string };
+      filters?: {
+        accountType?: string;
+        accountStatus?: string;
+        activity?: string;
+        wallet?: string;
+        kyc?: string;
+        kycStatus?: string;
+        state?: string;
+        district?: string;
+      };
     }) => {
       const idempotencyKey = `wa_send_${Date.now()}`;
       const { data } = await api.post('/admin/whatsapp/send', payload, {
@@ -337,9 +347,14 @@ export function useWhatsAppSummary(days = 30) {
 export function useWhatsAppRecipientStats(params?: {
   recipients?: string;
   targetMobile?: string;
+  singleRetailerId?: string;
+  accountType?: string;
+  accountStatus?: string;
+  activity?: string;
+  wallet?: string;
+  kyc?: string;
   state?: string;
   district?: string;
-  kycStatus?: string;
 }) {
   return useQuery({
     queryKey: ['whatsAppRecipientStats', params],
@@ -347,15 +362,34 @@ export function useWhatsAppRecipientStats(params?: {
       const queryParams = new URLSearchParams();
       if (params?.recipients) queryParams.set('recipients', params.recipients);
       if (params?.targetMobile) queryParams.set('targetMobile', params.targetMobile);
+      if (params?.singleRetailerId) queryParams.set('singleRetailerId', params.singleRetailerId);
+      if (params?.accountType) queryParams.set('accountType', params.accountType);
+      if (params?.accountStatus) queryParams.set('accountStatus', params.accountStatus);
+      if (params?.activity) queryParams.set('activity', params.activity);
+      if (params?.wallet) queryParams.set('wallet', params.wallet);
+      if (params?.kyc) queryParams.set('kyc', params.kyc);
       if (params?.state) queryParams.set('state', params.state);
       if (params?.district) queryParams.set('district', params.district);
-      if (params?.kycStatus) queryParams.set('kycStatus', params.kycStatus);
 
       const { data } = await api.get<{ success: boolean; data: any }>(
         `/admin/whatsapp/recipients-stats?${queryParams.toString()}`
       );
       return data.data;
     },
+  });
+}
+
+export function useSearchRetailers(query: string) {
+  return useQuery({
+    queryKey: ['searchRetailers', query],
+    queryFn: async () => {
+      if (!query || query.trim().length < 1) return [];
+      const { data } = await api.get<{ success: boolean; data: any[] }>(
+        `/admin/whatsapp/search-retailers?q=${encodeURIComponent(query)}`
+      );
+      return data.data;
+    },
+    enabled: !!query && query.trim().length >= 1,
   });
 }
 

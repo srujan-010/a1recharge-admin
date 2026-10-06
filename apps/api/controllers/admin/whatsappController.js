@@ -149,52 +149,74 @@ function buildRecipientUserQuery(recipients, filters = {}) {
   return query;
 }
 
-// @desc    Get Recipient Stats & Live Preview List
+const { getSegmentRetailers } = require('../../services/retailerSegmentation.service');
+
+// @desc    Get Recipient Stats & Live Preview List using unified Retailers segmentation
 // @route   GET /api/admin/whatsapp/recipients-stats
 // @access  Private (Admin)
 const getRecipientStats = async (req, res, next) => {
   try {
-    const { recipients = 'ALL', targetMobile, state, district, kycStatus } = req.query;
+    const {
+      recipients = 'ALL',
+      targetMobile,
+      singleRetailerId,
+      accountType,
+      accountStatus,
+      activity,
+      wallet,
+      kyc,
+      state,
+      district,
+    } = req.query;
 
-    if (recipients === 'SINGLE') {
-      if (!targetMobile) {
-        return res.status(200).json({
-          success: true,
-          data: { totalCount: 0, eligibleCount: 0, skippedNoPhone: 0, skippedInvalid: 0, eligibleNumbers: [], previewList: [] },
-        });
-      }
+    const filters = {
+      targetMobile,
+      singleRetailerId,
+      accountType,
+      accountStatus,
+      activity,
+      wallet,
+      kyc,
+      state,
+      district,
+    };
 
-      const normalized = normalizeIndianPhone(targetMobile);
-      return res.status(200).json({
-        success: true,
-        data: {
-          totalCount: 1,
-          eligibleCount: normalized ? 1 : 0,
-          skippedNoPhone: 0,
-          skippedInvalid: normalized ? 0 : 1,
-          eligibleNumbers: normalized ? [normalized] : [],
-          previewList: [{
-            retailerId: 'CUSTOM',
-            name: 'Single Retailer',
-            phone: targetMobile,
-            normalizedPhone: normalized,
-            isEligible: !!normalized,
-            reason: normalized ? 'Eligible' : 'Invalid format',
-          }],
-        },
-      });
-    }
-
-    const userQuery = buildRecipientUserQuery(recipients, { state, district, kycStatus });
-    const users = await User.find(userQuery).select('retailerId name phone mobile contactNumber status').lean();
-
-    const stats = processRecipientNumbers(users);
+    const stats = await getSegmentRetailers(recipients, filters);
 
     console.log(`[WhatsAppRecipientsStats] Mode: ${recipients} -> Fetched ${stats.totalCount} retailers, ${stats.eligibleCount} eligible WhatsApp numbers`);
 
     res.status(200).json({
       success: true,
       data: stats,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Search Retailers for Single Retailer Selection in Fast2SMS
+// @route   GET /api/admin/whatsapp/search-retailers
+// @access  Private (Admin)
+const searchRetailers = async (req, res, next) => {
+  try {
+    const { q = '' } = req.query;
+    if (!q || q.trim().length < 1) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const segmentResult = await getSegmentRetailers('ALL');
+    const searchLower = q.trim().toLowerCase();
+
+    const matches = segmentResult.recipients.filter(r =>
+      (r.name && r.name.toLowerCase().includes(searchLower)) ||
+      (r.phone && r.phone.toLowerCase().includes(searchLower)) ||
+      (r.retailerId && r.retailerId.toLowerCase().includes(searchLower)) ||
+      (r.shopName && r.shopName.toLowerCase().includes(searchLower))
+    ).slice(0, 20);
+
+    res.status(200).json({
+      success: true,
+      data: matches,
     });
   } catch (error) {
     next(error);
@@ -209,12 +231,13 @@ const sendCampaign = async (req, res, next) => {
     const {
       recipients = 'ALL',
       targetMobile,
+      singleRetailerId,
       messageId,
       templateId,
       variablesValues,
       mediaUrl,
       documentFilename,
-      filters,
+      filters = {},
     } = req.body;
 
     if (!messageId && !templateId) {
@@ -235,42 +258,27 @@ const sendCampaign = async (req, res, next) => {
       throw new Error('Selected WhatsApp template does not exist or has been deleted.');
     }
 
-    let targetNumbers = [];
-    let statsSummary = { totalCount: 0, eligibleCount: 0, skippedNoPhone: 0, skippedInvalid: 0 };
+    const segmentFilters = {
+      targetMobile,
+      singleRetailerId,
+      ...filters,
+    };
 
-    if (recipients === 'SINGLE') {
-      if (!targetMobile) {
-        res.status(400);
-        throw new Error('Target mobile number is required for single recipient.');
-      }
-      const normalized = normalizeIndianPhone(targetMobile);
-      if (!normalized) {
-        res.status(400);
-        throw new Error(`Invalid mobile number format: ${targetMobile}. Must be a valid 10-digit Indian mobile number.`);
-      }
-      targetNumbers = [normalized];
-      statsSummary = { totalCount: 1, eligibleCount: 1, skippedNoPhone: 0, skippedInvalid: 0 };
-    } else {
-      const userQuery = buildRecipientUserQuery(recipients, filters || {});
-      const users = await User.find(userQuery).select('retailerId name phone mobile contactNumber').lean();
-      
-      const stats = processRecipientNumbers(users);
-      targetNumbers = stats.eligibleNumbers;
-      statsSummary = stats;
+    const stats = await getSegmentRetailers(recipients, segmentFilters);
+    const targetNumbers = stats.eligibleNumbers;
 
-      console.log(`\n================ WHATSAPP RECIPIENT AUDIT LOG ================`);
-      console.log(`[Recipient Mode] ${recipients}`);
-      console.log(`[Total Retailers Fetched] ${stats.totalCount}`);
-      console.log(`[Eligible WhatsApp Numbers] ${stats.eligibleCount}`);
-      console.log(`[Skipped Records] ${stats.skippedNoPhone} (missing phone), ${stats.skippedInvalid} (invalid format)`);
-      console.log(`[First 5 Numbers] ${targetNumbers.slice(0, 5).join(', ')}`);
-      console.log(`=============================================================\n`);
-    }
+    console.log(`\n================ WHATSAPP RECIPIENT AUDIT LOG ================`);
+    console.log(`[Recipient Mode] ${recipients}`);
+    console.log(`[Total Retailers Fetched] ${stats.totalCount}`);
+    console.log(`[Eligible WhatsApp Numbers] ${stats.eligibleCount}`);
+    console.log(`[Skipped Records] ${stats.skippedNoPhone} (missing phone), ${stats.skippedInvalid} (invalid format)`);
+    console.log(`[First 5 Numbers] ${targetNumbers.slice(0, 5).join(', ')}`);
+    console.log(`=============================================================\n`);
 
     if (targetNumbers.length === 0) {
       res.status(400);
       throw new Error(
-        `No eligible WhatsApp recipients found. (${statsSummary.totalCount} active retailers found: ${statsSummary.skippedNoPhone} missing phone, ${statsSummary.skippedInvalid} invalid format).`
+        `No eligible WhatsApp recipients found for the selected segment (${stats.totalCount} retailers found: ${stats.skippedNoPhone} missing phone, ${stats.skippedInvalid} invalid format/disabled).`
       );
     }
 
@@ -965,6 +973,7 @@ module.exports = {
   getLogs,
   getSummary,
   getRecipientStats,
+  searchRetailers,
   getFast2SMSWalletTransactions,
   getFast2SMSWalletStats,
   getLogsSummary,

@@ -11,6 +11,7 @@ const { logAudit } = require('../../utils/auditHelper');
 const NotificationService = require('../../services/notification.service');
 const OtpSession = require('../../models/OtpSession');
 const walletService = require('../../services/wallet/wallet.service');
+const { calculateRetailersSummaryAndGroups, getActiveRetailerUserIdsInLast10Days, classifyWalletStatus } = require('../../services/retailerSegmentation.service');
 
 function getISTDateRanges() {
   const now = new Date();
@@ -114,196 +115,8 @@ async function getRetailersActivityMap(userIds) {
   return resultMap;
 }
 
-/**
- * Find userIds with valid transaction activity within the last 10 days.
- * Excludes test transactions and account creation records.
- */
-async function getActiveRetailerUserIdsInLast10Days() {
-  const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
-
-  const [activeTxnUserIds, activeRechargeUserIds, activeLedgerUserIds] = await Promise.all([
-    Transaction.distinct('userId', {
-      createdAt: { $gte: tenDaysAgo },
-      isTest: { $ne: true },
-      referenceId: { $not: /^TEST/i },
-      userId: { $ne: null }
-    }),
-    RechargeTransaction.distinct('userId', {
-      createdAt: { $gte: tenDaysAgo },
-      isTest: { $ne: true },
-      orderId: { $not: /^TEST/i },
-      userId: { $ne: null }
-    }),
-    WalletLedger.distinct('userId', {
-      createdAt: { $gte: tenDaysAgo },
-      $or: [{ amount: { $gt: 0 } }, { amountPaise: { $gt: 0 } }],
-      description: { $not: /Account Created/i },
-      referenceId: { $not: /^TEST/i },
-      userId: { $ne: null }
-    })
-  ]);
-
-  const activeUserSet = new Set([
-    ...activeTxnUserIds.map(id => id.toString()),
-    ...activeRechargeUserIds.map(id => id.toString()),
-    ...activeLedgerUserIds.map(id => id.toString())
-  ]);
-
-  return Array.from(activeUserSet).map(id => new mongoose.Types.ObjectId(id));
-}
-
-/**
- * Classifies wallet status strictly based on available balance:
- * - availableBalance < 0: NEGATIVE_BALANCE
- * - availableBalance === 0: ZERO_BALANCE
- * - availableBalance > 0 && availableBalance < 500: LOW_WALLET
- * - availableBalance >= 500: AVAILABLE
- */
-function classifyWalletStatus(availableBalance) {
-  const balance = Number(availableBalance ?? 0);
-  if (balance < 0) {
-    return 'NEGATIVE_BALANCE';
-  }
-  if (balance === 0) {
-    return 'ZERO_BALANCE';
-  }
-  if (balance > 0 && balance < 500) {
-    return 'LOW_WALLET';
-  }
-  return 'AVAILABLE';
-}
-
-/**
- * Calculates global summary statistics across ALL retailers
- * Completely independent of pagination, limit, or skip.
- */
 async function calculateRetailersSummary() {
-  const [allRetailers, activeUserIds] = await Promise.all([
-    User.find({ role: 'retailer' })
-      .select('_id status isLocked lockUntil kycStatus accountType shopName businessType gstNumber')
-      .lean(),
-    getActiveRetailerUserIdsInLast10Days()
-  ]);
-
-  const activeSet = new Set(activeUserIds.map(id => id.toString()));
-  const allRetailerIds = allRetailers.map(r => r._id);
-  const wallets = await Wallet.find({ userId: { $in: allRetailerIds } })
-    .select('userId balancePaise onHoldPaise')
-    .lean();
-  const walletMap = new Map(wallets.map(w => [w.userId.toString(), w]));
-
-  const now = new Date();
-  let activeAccounts = 0;
-  let locked = 0;
-  let blocked = 0;
-  let pendingKyc = 0;
-  let activeActivity = 0;
-  let inactiveActivity = 0;
-  let zeroBalance = 0;
-  let lowWallet = 0;
-  let available = 0;
-  let negativeBalance = 0;
-  let totalWalletPaise = 0;
-
-  const zeroBalanceUserIds = [];
-  const lowWalletUserIds = [];
-  const availableUserIds = [];
-  const negativeBalanceUserIds = [];
-  const activeAccountUserIds = [];
-  const lockedUserIds = [];
-  const blockedUserIds = [];
-  const pendingKycUserIds = [];
-
-  for (const r of allRetailers) {
-    const isAccountLocked = Boolean(r.isLocked || (r.lockUntil && new Date(r.lockUntil) > now));
-    const cleanStatus = r.status || 'active';
-    const uidStr = r._id.toString();
-
-    if (isAccountLocked) {
-      locked++;
-      lockedUserIds.push(r._id);
-    }
-    if (cleanStatus === 'blocked') {
-      blocked++;
-      blockedUserIds.push(r._id);
-    }
-    if ((cleanStatus === 'active' || !r.status) && !isAccountLocked) {
-      activeAccounts++;
-      activeAccountUserIds.push(r._id);
-    }
-    if (r.kycStatus === 'pending') {
-      pendingKyc++;
-      pendingKycUserIds.push(r._id);
-    }
-
-    const isActive = activeSet.has(uidStr);
-    if (isActive) {
-      activeActivity++;
-    } else {
-      inactiveActivity++;
-    }
-
-    let normAccountType = r.accountType;
-    if (!normAccountType || !['PERSONAL', 'BUSINESS'].includes(normAccountType.toUpperCase())) {
-      normAccountType = (r.shopName || r.businessType || r.gstNumber) ? 'BUSINESS' : 'PERSONAL';
-    } else {
-      normAccountType = normAccountType.toUpperCase();
-    }
-
-    if (normAccountType !== 'PERSONAL') {
-      const w = walletMap.get(uidStr);
-      const balancePaise = Number(w?.balancePaise || 0);
-      const onHoldPaise = Number(w?.onHoldPaise || 0);
-      const availPaise = balancePaise - onHoldPaise;
-      const availRupees = Number((availPaise / 100).toFixed(2));
-      const wStatus = classifyWalletStatus(availRupees);
-
-      if (wStatus === 'ZERO_BALANCE') {
-        zeroBalance++;
-        zeroBalanceUserIds.push(r._id);
-      } else if (wStatus === 'LOW_WALLET') {
-        lowWallet++;
-        lowWalletUserIds.push(r._id);
-      } else if (wStatus === 'AVAILABLE') {
-        available++;
-        availableUserIds.push(r._id);
-      } else if (wStatus === 'NEGATIVE_BALANCE') {
-        negativeBalance++;
-        negativeBalanceUserIds.push(r._id);
-      }
-
-      totalWalletPaise += availPaise;
-    }
-  }
-
-  const summary = {
-    totalRetailers: allRetailers.length,
-    activeAccounts,
-    activeActivity,
-    inactiveActivity,
-    locked,
-    blocked,
-    pendingKyc,
-    zeroBalance,
-    lowWallet,
-    available,
-    negativeBalance,
-    totalWalletBalance: Number((totalWalletPaise / 100).toFixed(2))
-  };
-
-  const userGroups = {
-    zeroBalanceUserIds,
-    lowWalletUserIds,
-    availableUserIds,
-    negativeBalanceUserIds,
-    activeAccountUserIds,
-    lockedUserIds,
-    blockedUserIds,
-    pendingKycUserIds,
-    activeActivityUserIds: activeUserIds
-  };
-
-  return { summary, userGroups };
+  return calculateRetailersSummaryAndGroups();
 }
 
 // @desc    Get all retailers (Paginated & Searchable)
@@ -320,7 +133,7 @@ const getRetailers = async (req, res, next) => {
     const quickFilter = req.query.quickFilter || '';
 
     // 1. Calculate global summary across ALL retailers (completely independent of pagination)
-    const { summary, userGroups } = await calculateRetailersSummary();
+    const { summary, userGroups } = await calculateRetailersSummaryAndGroups();
 
     const query = { role: 'retailer' };
 

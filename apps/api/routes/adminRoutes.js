@@ -183,6 +183,7 @@ const {
   getLogs: getWhatsAppLogs,
   getSummary: getWhatsAppSummary,
   getRecipientStats: getWhatsAppRecipientStats,
+  searchRetailers,
   getFast2SMSWalletTransactions,
   getFast2SMSWalletStats,
   getLogsSummary: getWhatsAppLogsSummary,
@@ -203,6 +204,7 @@ router.get('/whatsapp/logs', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SU
 router.get('/whatsapp/logs-summary', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getWhatsAppLogsSummary);
 router.get('/whatsapp/summary', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getWhatsAppSummary);
 router.get('/whatsapp/recipients-stats', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getWhatsAppRecipientStats);
+router.get('/whatsapp/search-retailers', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), searchRetailers);
 router.get('/whatsapp/fast2sms-wallet-transactions', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getFast2SMSWalletTransactions);
 router.get('/whatsapp/fast2sms-wallet-stats', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'SUPPORT'), getFast2SMSWalletStats);
 
