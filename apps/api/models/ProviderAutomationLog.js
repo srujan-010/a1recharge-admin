@@ -5,7 +5,8 @@ const recipientStatusSchema = new mongoose.Schema({
   status: { type: String, enum: ['SENT', 'FAILED', 'SKIPPED'], required: true },
   requestId: { type: String, default: null },
   errorDetails: { type: String, default: null },
-  sentAt: { type: Date, default: Date.now }
+  channel: { type: String, default: 'WHATSAPP' },
+  sentAt: { type: Date, default: Date.now },
 }, { _id: false });
 
 const providerAutomationLogSchema = new mongoose.Schema({
@@ -30,7 +31,7 @@ const providerAutomationLogSchema = new mongoose.Schema({
   },
   threshold: {
     type: Number,
-    default: 500,
+    default: 2000,
   },
   detectedAt: {
     type: Date,
@@ -38,8 +39,22 @@ const providerAutomationLogSchema = new mongoose.Schema({
   },
   overallStatus: {
     type: String,
-    enum: ['ALERT_SENT', 'PARTIAL_SUCCESS', 'FAILED', 'NO_ALERT_NEEDED', 'ERROR_SKIPPED', 'DISABLED'],
+    enum: [
+      'ALERT_SENT',
+      'PARTIAL_SUCCESS',
+      'FAILED',
+      'NO_ALERT_NEEDED',
+      'ERROR_SKIPPED',
+      'DISABLED',
+      'ALREADY_ALERTED',
+      'RECOVERED'
+    ],
     required: true,
+  },
+  triggerType: {
+    type: String,
+    enum: ['SCHEDULED_CHECK', 'MANUAL_CHECK', 'RECHARGE_EVENT', 'EXTERNAL_CRON'],
+    default: 'SCHEDULED_CHECK',
   },
   recipientsStatus: [recipientStatusSchema],
   errorDetails: {

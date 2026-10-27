@@ -243,12 +243,19 @@ router.get('/integrations/planapi/status', protectAdmin, authorize('SUPER_ADMIN'
 const {
   getSettings: getProviderAutomationSettings,
   updateSettings: updateProviderAutomationSettings,
+  checkBalanceNow: checkProviderBalanceNow,
+  handleCronCheck: handleProviderCronCheck,
   getLogs: getProviderAutomationLogs,
   sendTestAlert: sendProviderAutomationTestAlert,
 } = require('../controllers/admin/providerAutomationController');
 
+// External Scheduler / Cron route (Protected by A1TOPUP_MONITOR_SECRET or CRON_SECRET)
+router.all('/provider-automations/cron/check-balance', handleProviderCronCheck);
+
+// Admin-managed automation routes
 router.get('/provider-automations/settings', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'), getProviderAutomationSettings);
 router.put('/provider-automations/settings', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), updateProviderAutomationSettings);
+router.post('/provider-automations/check-balance-now', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE'), idempotency, checkProviderBalanceNow);
 router.get('/provider-automations/logs', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN', 'FINANCE', 'SUPPORT'), getProviderAutomationLogs);
 router.post('/provider-automations/test', protectAdmin, authorize('SUPER_ADMIN', 'ADMIN'), sendProviderAutomationTestAlert);
 

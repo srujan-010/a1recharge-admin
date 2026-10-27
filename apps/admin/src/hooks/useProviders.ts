@@ -50,13 +50,30 @@ export interface ProviderAutomationSettingsData {
   providerName: string;
   threshold: number;
   recipients: string[];
+  channel?: 'WHATSAPP' | 'SMS';
   templateName: string;
   messageId: number;
   phoneNumberId: string;
+  checkIntervalMinutes?: number;
+  monitoringStatus?: 'ACTIVE' | 'DISABLED' | 'ERROR' | 'CHECKING';
+  alertSent?: boolean;
   lastCheckAt?: string;
+  lastSuccessfulCheckAt?: string;
+  nextCheckAt?: string;
   lastAlertAt?: string;
+  lastAlertBalance?: number;
   lastBalance?: number;
   lastStatus: 'NORMAL' | 'LOW_BALANCE' | 'UNKNOWN';
+  lastCheckError?: string | null;
+  lastMessagingError?: string | null;
+  lastRecipientsStatus?: Array<{
+    recipient: string;
+    status: 'SENT' | 'FAILED' | 'SKIPPED';
+    requestId?: string;
+    errorDetails?: string;
+    channel?: string;
+    sentAt: string;
+  }>;
 }
 
 export interface ProviderAutomationLogItem {
@@ -68,12 +85,14 @@ export interface ProviderAutomationLogItem {
   providerBalance?: number;
   threshold: number;
   detectedAt: string;
-  overallStatus: 'ALERT_SENT' | 'PARTIAL_SUCCESS' | 'FAILED' | 'NO_ALERT_NEEDED' | 'ERROR_SKIPPED' | 'DISABLED';
+  overallStatus: 'ALERT_SENT' | 'PARTIAL_SUCCESS' | 'FAILED' | 'NO_ALERT_NEEDED' | 'ERROR_SKIPPED' | 'DISABLED' | 'ALREADY_ALERTED' | 'RECOVERED';
+  triggerType?: 'SCHEDULED_CHECK' | 'MANUAL_CHECK' | 'RECHARGE_EVENT' | 'EXTERNAL_CRON';
   recipientsStatus: Array<{
     recipient: string;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
     requestId?: string;
     errorDetails?: string;
+    channel?: string;
     sentAt: string;
   }>;
   errorDetails?: string;
@@ -87,7 +106,7 @@ export function useProviderAutomationSettings() {
       const { data } = await api.get<{ success: boolean; data: ProviderAutomationSettingsData }>('/admin/provider-automations/settings');
       return data.data;
     },
-    refetchInterval: 15000,
+    refetchInterval: 10000,
   });
 }
 
@@ -100,6 +119,22 @@ export function useUpdateProviderAutomationSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['provider-automation-settings'] });
+    },
+  });
+}
+
+export function useCheckBalanceNow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (options?: { force?: boolean }) => {
+      const { data } = await api.post('/admin/provider-automations/check-balance-now', options || {});
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['provider-automation-settings'] });
+      queryClient.invalidateQueries({ queryKey: ['provider-automation-logs'] });
+      queryClient.invalidateQueries({ queryKey: ['providers'] });
+      queryClient.invalidateQueries({ queryKey: ['provider-balance'] });
     },
   });
 }
@@ -127,4 +162,5 @@ export function useSendProviderAutomationTest() {
     },
   });
 }
+
 
