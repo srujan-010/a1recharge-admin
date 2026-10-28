@@ -70,6 +70,13 @@ class FinancialSummaryService {
         const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
         return { startDate: start, endDate: end };
       }
+      if (p === 'this_year' || p === 'year' || p === 'this year') {
+        const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+        return { startDate: start, endDate: now };
+      }
+      if (p === 'all' || p === 'all_time' || p === 'alltime' || p === 'all time') {
+        return { startDate: new Date(0), endDate: now };
+      }
     }
 
     // Default to last 30 days
@@ -641,6 +648,19 @@ class FinancialSummaryService {
    * Period Comparison (Selected Period vs Previous Equivalent Period)
    */
   static async getPeriodComparison({ startDate, endDate, period, accountType, showTest = false }) {
+    const isAllTime = period && ['all', 'all_time', 'alltime', 'all time'].includes(period.toLowerCase());
+    if (isAllTime) {
+      const currentSummary = await this.getFinancialSummary({ startDate, endDate, period, accountType, showTest });
+      return {
+        rechargeVolume: { current: currentSummary.rechargeVolumeRupees, previous: 0, diff: 0, pct: 0 },
+        providerCommission: { current: currentSummary.providerCommRupees, previous: 0, diff: 0, pct: 0 },
+        retailerCommission: { current: currentSummary.retailerCommRupees, previous: 0, diff: 0, pct: 0 },
+        companyProfit: { current: currentSummary.companyProfitRupees, previous: 0, diff: 0, pct: 0 },
+        transactions: { current: currentSummary.successCount, previous: 0, diff: 0, pct: 0 },
+        previousDateRange: { startDate: new Date(0), endDate: new Date(0) },
+      };
+    }
+
     const { startDate: currentStart, endDate: currentEnd } = this.parseDateRange(startDate, endDate, period);
 
     const durationMs = currentEnd.getTime() - currentStart.getTime();

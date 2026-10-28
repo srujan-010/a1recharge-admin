@@ -210,6 +210,7 @@ export default function ReportsPage() {
               { id: '30d', label: '30 Days' },
               { id: 'this_month', label: 'This Month' },
               { id: 'last_month', label: 'Last Month' },
+              { id: 'all', label: 'All Time' },
             ].map(p => (
               <button
                 key={p.id}
