@@ -33,6 +33,20 @@ const providerAutomationLogSchema = new mongoose.Schema({
     type: Number,
     default: 2000,
   },
+  thresholdLevel: {
+    type: String,
+    enum: ['NORMAL', 'LOW_2000', 'LOW_1000', 'CRITICAL_500', 'UNKNOWN'],
+    default: 'UNKNOWN',
+  },
+  templateName: {
+    type: String,
+  },
+  templateId: {
+    type: String,
+  },
+  messageId: {
+    type: Number,
+  },
   detectedAt: {
     type: Date,
     default: Date.now,
@@ -53,7 +67,7 @@ const providerAutomationLogSchema = new mongoose.Schema({
   },
   triggerType: {
     type: String,
-    enum: ['SCHEDULED_CHECK', 'MANUAL_CHECK', 'RECHARGE_EVENT', 'EXTERNAL_CRON'],
+    enum: ['SCHEDULED_CHECK', 'MANUAL_CHECK', 'RECHARGE_EVENT', 'EXTERNAL_CRON', 'RECONCILIATION'],
     default: 'SCHEDULED_CHECK',
   },
   recipientsStatus: [recipientStatusSchema],

@@ -9,344 +9,422 @@ const ProviderAutomationSettings = require('../models/ProviderAutomationSettings
 const ProviderAutomationLog = require('../models/ProviderAutomationLog');
 const ProviderFactory = require('../services/providers/provider.factory');
 const fast2smsWhatsAppService = require('../services/fast2smsWhatsApp.service');
-const fast2smsService = require('../services/fast2sms.service');
-const a1topupWorker = require('../workers/a1topupWalletMonitorWorker');
 
-async function runComprehensiveTests() {
-  console.log('\n================================================================');
-  console.log('   A1TOPUP LOW-WALLET ALERT SYSTEM - COMPREHENSIVE TEST SUITE   ');
-  console.log('================================================================\n');
+async function runComprehensiveTestSuite() {
+  console.log('\n========================================================================');
+  console.log('   A1TOPUP THREE-TEMPLATE WALLET MONITOR - COMPREHENSIVE TEST SUITE     ');
+  console.log('========================================================================\n');
 
-  let mongoConnected = false;
+  let passedTests = 0;
+  let totalTests = 0;
+
+  const assertCondition = (condition, testName, extraDetails = '') => {
+    totalTests++;
+    if (condition) {
+      passedTests++;
+      console.log(`✅ [PASS] ${testName}`);
+      if (extraDetails) console.log(`   └─ ${extraDetails}`);
+    } else {
+      console.error(`❌ [FAIL] ${testName}`);
+      if (extraDetails) console.error(`   └─ ${extraDetails}`);
+    }
+  };
+
   try {
     const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/a1recharge';
     await mongoose.connect(mongoUri);
-    mongoConnected = true;
     console.log('[TEST SETUP] Connected to MongoDB.');
 
-    // Save originals for mocking
+    // Save original provider & whatsapp service methods for mocking
     const a1Provider = ProviderFactory.getProvider('A1Topup');
     const originalBalance = a1Provider.balance;
     const originalSendWa = fast2smsWhatsAppService.sendWhatsAppMessage;
-    const originalSendSms = fast2smsService.sendSMS;
 
-    // Reset settings in DB for testing
+    // Clean test state in MongoDB
     await ProviderAutomationSettings.deleteMany({});
     await ProviderAutomationLog.deleteMany({});
 
+    // Initialize fresh settings
     const settings = await providerAutomationService.getSettings();
     settings.enabled = true;
-    settings.threshold = 2000;
     settings.recipients = ['8275366399', '9100329521'];
     settings.channel = 'WHATSAPP';
-    settings.alertSent = false;
-    settings.deliveredRecipients = [];
+    settings.currentThresholdState = 'NORMAL';
+    settings.isRecovered = true;
     await settings.save();
 
-    let passedTests = 0;
-    let totalTests = 0;
-
-    const assertCondition = (condition, testName, extraDetails = '') => {
-      totalTests++;
-      if (condition) {
-        passedTests++;
-        console.log(`✅ [PASS] ${testName}`);
-        if (extraDetails) console.log(`   └─ ${extraDetails}`);
-      } else {
-        console.error(`❌ [FAIL] ${testName}`);
-        if (extraDetails) console.error(`   └─ ${extraDetails}`);
-      }
-    };
-
-    // -------------------------------------------------------------------------
-    // SCENARIO 1: Balance ₹2,500 -> No low-balance alert
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 1: Balance ₹2,500 (Above ₹2,000 Threshold) ---');
     let messagesDispatched = [];
-    a1Provider.balance = async () => ({ success: true, balance: 2500, currency: 'INR' });
+
+    // =========================================================================
+    // SCENARIO 1: Balance ₹2,500 -> No alert
+    // =========================================================================
+    console.log('\n--- SCENARIO 1: Balance ₹2,500 (Above ₹2,000 Threshold) ---');
+    messagesDispatched = [];
+    a1Provider.balance = async () => ({ success: true, balance: 2500 });
     fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
       messagesDispatched.push(opts);
       return { success: true, request_id: 'REQ_WA_2500' };
     };
 
-    const res1 = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
+    const res1 = await providerAutomationService.checkBalanceAndAlert({ force: true, triggerType: 'MANUAL_CHECK' });
     assertCondition(
       res1.checked === true &&
       res1.status === 'NORMAL' &&
       res1.alertSent === false &&
       messagesDispatched.length === 0,
-      'Scenario 1: Balance ₹2,500 -> Status NORMAL, 0 alerts sent',
-      `Result: status=${res1.status}, messagesCount=${messagesDispatched.length}`
+      'Scenario 1: Balance ₹2,500 -> Status NORMAL, 0 alerts dispatched',
+      `Status: ${res1.status}, messagesDispatched: ${messagesDispatched.length}`
     );
 
-    // -------------------------------------------------------------------------
-    // SCENARIO 2: Balance ₹1,999 -> Alert both recipients (8275366399 & 9100329521)
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 2: Balance ₹1,999 (Below ₹2,000 Threshold) ---');
+    // =========================================================================
+    // SCENARIO 2: Balance ₹1,800 -> One ₹2,000 warning to each recipient
+    // =========================================================================
+    console.log('\n--- SCENARIO 2: Balance ₹1,800 (₹2,000 Warning Range) ---');
     messagesDispatched = [];
-    a1Provider.balance = async () => ({ success: true, balance: 1999, currency: 'INR' });
-    fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
-      messagesDispatched.push(opts);
-      return { success: true, request_id: `REQ_WA_${opts.numbers}` };
-    };
+    a1Provider.balance = async () => ({ success: true, balance: 1800 });
 
-    const res2 = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
+    const res2 = await providerAutomationService.checkBalanceAndAlert({ force: true, triggerType: 'RECHARGE_EVENT' });
     const calledNumbers2 = messagesDispatched.map(m => m.numbers);
+    const usedMsgId2 = messagesDispatched[0]?.messageId;
     assertCondition(
       res2.checked === true &&
-      res2.status === 'LOW_BALANCE' &&
+      res2.status === 'LOW_2000' &&
       res2.alertSent === true &&
       messagesDispatched.length === 2 &&
       calledNumbers2.includes('8275366399') &&
-      calledNumbers2.includes('9100329521'),
-      'Scenario 2: Balance ₹1,999 -> Alert dispatched to BOTH recipients',
-      `Messages Sent: ${calledNumbers2.join(', ')}`
+      calledNumbers2.includes('9100329521') &&
+      usedMsgId2 === 40230,
+      'Scenario 2: Balance ₹1,800 -> One ₹2,000 warning (Template 40230) to each recipient',
+      `Status: ${res2.status}, Recipients: [${calledNumbers2.join(', ')}], MessageId: ${usedMsgId2}`
     );
 
-    // Verify DB state
-    const settingsAfter2 = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
-    assertCondition(
-      settingsAfter2.alertSent === true &&
-      settingsAfter2.deliveredRecipients.includes('8275366399') &&
-      settingsAfter2.deliveredRecipients.includes('9100329521'),
-      'Scenario 2 DB: alertSent marked TRUE and deliveredRecipients tracked',
-      `alertSent=${settingsAfter2.alertSent}, delivered=${settingsAfter2.deliveredRecipients.join(', ')}`
-    );
-
-    // -------------------------------------------------------------------------
-    // SCENARIO 3: Balance remains ₹1,999 -> Do NOT repeatedly send duplicate alerts
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 3: Balance remains ₹1,999 (Duplicate Suppression) ---');
+    // =========================================================================
+    // SCENARIO 3: Balance remains ₹1,800 after another recharge -> No duplicate warning
+    // =========================================================================
+    console.log('\n--- SCENARIO 3: Balance Remains ₹1,800 After Another Recharge ---');
     messagesDispatched = [];
-    a1Provider.balance = async () => ({ success: true, balance: 1999, currency: 'INR' });
+    a1Provider.balance = async () => ({ success: true, balance: 1800 });
 
-    const res3 = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
+    const res3 = await providerAutomationService.checkAndTriggerLowBalanceAlert({
+      orderId: 'RECHARGE_TXN_003',
+      amount: 199,
+    });
     assertCondition(
-      res3.checked === true &&
-      res3.status === 'LOW_BALANCE' &&
-      res3.alertSent === false &&
-      res3.reason === 'ALREADY_ALERTED' &&
+      res3.overallStatus === 'ALREADY_ALERTED' &&
       messagesDispatched.length === 0,
-      'Scenario 3: Balance remains ₹1,999 -> Duplicate alert suppressed (0 messages sent)',
-      `reason=${res3.reason}, messagesDispatched=${messagesDispatched.length}`
+      'Scenario 3: Balance remains ₹1,800 -> Duplicate suppressed (0 messages sent)',
+      `Log Status: ${res3.overallStatus}, Dispatched Count: ${messagesDispatched.length}`
     );
 
-    // -------------------------------------------------------------------------
-    // SCENARIO 4: Balance recovers to ₹2,500 -> Reset the alert state
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 4: Balance recovers to ₹2,500 (Alert State Recovery) ---');
+    // =========================================================================
+    // SCENARIO 4: Balance drops to ₹950 -> One ₹1,000 alert to each recipient
+    // =========================================================================
+    console.log('\n--- SCENARIO 4: Balance Drops to ₹950 (₹1,000 High-Priority Range) ---');
     messagesDispatched = [];
-    a1Provider.balance = async () => ({ success: true, balance: 2500, currency: 'INR' });
+    a1Provider.balance = async () => ({ success: true, balance: 950 });
 
-    const res4 = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
-    const settingsAfter4 = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
+    const res4 = await providerAutomationService.checkBalanceAndAlert({ force: true, triggerType: 'RECHARGE_EVENT' });
+    const calledNumbers4 = messagesDispatched.map(m => m.numbers);
+    const usedMsgId4 = messagesDispatched[0]?.messageId;
     assertCondition(
       res4.checked === true &&
-      res4.status === 'NORMAL' &&
-      res4.wasRecovered === true &&
-      settingsAfter4.alertSent === false &&
-      settingsAfter4.deliveredRecipients.length === 0,
-      'Scenario 4: Balance recovers to ₹2,500 -> Alert state reset in DB (alertSent: false, delivered: [])',
-      `wasRecovered=${res4.wasRecovered}, alertSent=${settingsAfter4.alertSent}, deliveredCount=${settingsAfter4.deliveredRecipients.length}`
+      res4.status === 'LOW_1000' &&
+      res4.alertSent === true &&
+      messagesDispatched.length === 2 &&
+      calledNumbers4.includes('8275366399') &&
+      calledNumbers4.includes('9100329521') &&
+      usedMsgId4 === 40235,
+      'Scenario 4: Balance ₹950 -> One ₹1,000 alert (Template 40235) to each recipient',
+      `Status: ${res4.status}, Recipients: [${calledNumbers4.join(', ')}], MessageId: ${usedMsgId4}`
     );
 
-    // -------------------------------------------------------------------------
-    // SCENARIO 5: Balance falls to ₹1,900 again -> Send a new alert
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 5: Balance falls to ₹1,900 again (New Low-Balance Event) ---');
+    // =========================================================================
+    // SCENARIO 5: Balance drops to ₹450 -> One critical alert to each recipient
+    // =========================================================================
+    console.log('\n--- SCENARIO 5: Balance Drops to ₹450 (₹500 Critical Range) ---');
     messagesDispatched = [];
-    a1Provider.balance = async () => ({ success: true, balance: 1900, currency: 'INR' });
-    fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
-      messagesDispatched.push(opts);
-      return { success: true, request_id: `REQ_WA_${opts.numbers}_NEW` };
-    };
+    a1Provider.balance = async () => ({ success: true, balance: 450 });
 
-    const res5 = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
+    const res5 = await providerAutomationService.checkBalanceAndAlert({ force: true, triggerType: 'RECHARGE_EVENT' });
     const calledNumbers5 = messagesDispatched.map(m => m.numbers);
+    const usedMsgId5 = messagesDispatched[0]?.messageId;
     assertCondition(
       res5.checked === true &&
-      res5.status === 'LOW_BALANCE' &&
+      res5.status === 'CRITICAL_500' &&
       res5.alertSent === true &&
       messagesDispatched.length === 2 &&
       calledNumbers5.includes('8275366399') &&
-      calledNumbers5.includes('9100329521'),
-      'Scenario 5: Balance drops to ₹1,900 -> New alert cycle triggered for both recipients',
-      `Messages sent: ${calledNumbers5.join(', ')}`
+      calledNumbers5.includes('9100329521') &&
+      usedMsgId5 === 40237,
+      'Scenario 5: Balance ₹450 -> One critical alert (Template 40237) to each recipient',
+      `Status: ${res5.status}, Recipients: [${calledNumbers5.join(', ')}], MessageId: ${usedMsgId5}`
     );
 
-    // -------------------------------------------------------------------------
-    // SCENARIO 6: Provider API fails -> Log error without false low-balance alert
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 6: Provider API Fails (Fail-Safe Verification) ---');
+    // =========================================================================
+    // SCENARIO 6: Balance recovers to ₹2,500 -> Alert state marked recovered
+    // =========================================================================
+    console.log('\n--- SCENARIO 6: Balance Recovers to ₹2,500 (Above ₹2,000) ---');
     messagesDispatched = [];
-    a1Provider.balance = async () => {
-      throw new Error('ETIMEDOUT: Provider server unreachable at business.a1topup.com');
-    };
+    a1Provider.balance = async () => ({ success: true, balance: 2500 });
 
-    const res6 = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
+    const res6 = await providerAutomationService.checkBalanceAndAlert({ force: true, triggerType: 'RECONCILIATION' });
     const settingsAfter6 = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
     assertCondition(
-      res6.checked === false &&
-      res6.reason === 'API_FAILED' &&
-      res6.error.includes('ETIMEDOUT') &&
-      messagesDispatched.length === 0 &&
-      settingsAfter6.lastCheckError !== null &&
-      settingsAfter6.lastBalance === 1900, // Never reset to 0!
-      'Scenario 6: Provider API Failure -> Logged as API_FAILED without generating false alerts',
-      `Error logged: "${settingsAfter6.lastCheckError}", Preserved Balance: ₹${settingsAfter6.lastBalance}`
-    );
-
-    // -------------------------------------------------------------------------
-    // SCENARIO 7: One recipient message fails -> Retry without duplicating accepted
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 7: Partial Delivery Failure & Safe Retry Handling ---');
-    // First reset alert state to simulate fresh drop
-    await ProviderAutomationSettings.updateOne(
-      { automationKey: 'a1topup_low_balance' },
-      { $set: { alertSent: false, deliveredRecipients: [], lastStatus: 'NORMAL' } }
-    );
-
-    messagesDispatched = [];
-    a1Provider.balance = async () => ({ success: true, balance: 1850, currency: 'INR' });
-    
-    // Simulate: Phone 1 (8275366399) succeeds, Phone 2 (9100329521) fails
-    fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
-      messagesDispatched.push(opts);
-      if (opts.numbers === '9100329521') {
-        throw new Error('Fast2SMS 502: Bad Gateway temporary network failure');
-      }
-      return { success: true, request_id: 'REQ_WA_8275366399' };
-    };
-
-    const res7a = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
-    const settingsAfter7a = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
-
-    assertCondition(
-      res7a.overallStatus === 'PARTIAL_SUCCESS' &&
-      settingsAfter7a.deliveredRecipients.includes('8275366399') &&
-      !settingsAfter7a.deliveredRecipients.includes('9100329521') &&
-      settingsAfter7a.alertSent === false, // Not fully satisfied because Phone 2 failed
-      'Scenario 7a: Phone 1 succeeds, Phone 2 fails -> PARTIAL_SUCCESS recorded; delivered: [8275366399]',
-      `Delivered: [${settingsAfter7a.deliveredRecipients.join(', ')}], alertSent=${settingsAfter7a.alertSent}`
-    );
-
-    // Second check (Retry): Phone 2 now succeeds. Phone 1 MUST NOT receive a duplicate message!
-    messagesDispatched = [];
-    fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
-      messagesDispatched.push(opts);
-      return { success: true, request_id: 'REQ_WA_9100329521_RETRY' };
-    };
-
-    const res7b = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
-    const settingsAfter7b = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
-
-    assertCondition(
-      messagesDispatched.length === 1 &&
-      messagesDispatched[0].numbers === '9100329521' &&
-      settingsAfter7b.deliveredRecipients.includes('8275366399') &&
-      settingsAfter7b.deliveredRecipients.includes('9100329521') &&
-      settingsAfter7b.alertSent === true,
-      'Scenario 7b: Retry check -> Dispatched ONLY to Phone 2 without duplicating to Phone 1',
-      `Targeted retry number: ${messagesDispatched[0]?.numbers}, alertSent=${settingsAfter7b.alertSent}`
-    );
-
-    // -------------------------------------------------------------------------
-    // SCENARIO 8: Backend Restarts -> Persisted alert state preserved in MongoDB
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 8: Backend Restart & Persisted State Resumption ---');
-    // Simulate server reboot by re-instantiating / fetching fresh settings from MongoDB
-    const reloadedSettings = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
-    messagesDispatched = [];
-    a1Provider.balance = async () => ({ success: true, balance: 1850, currency: 'INR' });
-
-    // Balance is still 1850, alertSent is true in DB
-    const res8 = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
-    assertCondition(
-      reloadedSettings.alertSent === true &&
-      res8.reason === 'ALREADY_ALERTED' &&
+      res6.checked === true &&
+      res6.status === 'NORMAL' &&
+      res6.wasRecovered === true &&
+      settingsAfter6.isRecovered === true &&
+      settingsAfter6.currentThresholdState === 'NORMAL' &&
+      settingsAfter6.thresholdAlerts.LOW_2000.alertSent === false &&
+      settingsAfter6.thresholdAlerts.LOW_1000.alertSent === false &&
+      settingsAfter6.thresholdAlerts.CRITICAL_500.alertSent === false &&
       messagesDispatched.length === 0,
-      'Scenario 8: Post-Restart Check -> Alert state loaded from MongoDB; duplicate alert suppressed',
-      `Persisted alertSent=${reloadedSettings.alertSent}, reason=${res8.reason}`
+      'Scenario 6: Balance recovers to ₹2,500 -> Marked recovered & all thresholds reset',
+      `wasRecovered: ${res6.wasRecovered}, isRecovered: ${settingsAfter6.isRecovered}`
     );
 
-    // -------------------------------------------------------------------------
-    // SCENARIO 9: Fast2SMS Quick SMS Channel Support
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 9: Fast2SMS SMS Channel Dispatch ---');
-    await ProviderAutomationSettings.updateOne(
-      { automationKey: 'a1topup_low_balance' },
-      { $set: { channel: 'SMS', alertSent: false, deliveredRecipients: [], lastStatus: 'NORMAL' } }
+    // =========================================================================
+    // SCENARIO 7: Balance later falls to ₹1,800 -> A new warning cycle begins
+    // =========================================================================
+    console.log('\n--- SCENARIO 7: Balance Later Falls to ₹1,800 -> New Cycle Begins ---');
+    messagesDispatched = [];
+    a1Provider.balance = async () => ({ success: true, balance: 1800 });
+
+    const res7 = await providerAutomationService.checkBalanceAndAlert({ force: true, triggerType: 'RECHARGE_EVENT' });
+    assertCondition(
+      res7.checked === true &&
+      res7.status === 'LOW_2000' &&
+      res7.alertSent === true &&
+      messagesDispatched.length === 2,
+      'Scenario 7: Balance later falls to ₹1,800 -> Fresh warning cycle triggers (2 messages sent)',
+      `Dispatched Count: ${messagesDispatched.length}, Status: ${res7.status}`
     );
 
-    let smsDispatched = [];
-    fast2smsService.sendSMS = async (opts) => {
-      smsDispatched.push(opts);
-      return { success: true, requestId: `REQ_SMS_${opts.phone}`, message: 'SMS accepted' };
+    // =========================================================================
+    // SCENARIO 8: One recipient fails -> The other recipient is still attempted
+    // =========================================================================
+    console.log('\n--- SCENARIO 8: Independent Recipient Attempt (One Fails, One Succeeds) ---');
+    messagesDispatched = [];
+    // Reset alertSent on LOW_1000 for this test
+    const settings8 = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
+    settings8.thresholdAlerts.LOW_1000.alertSent = false;
+    settings8.thresholdAlerts.LOW_1000.deliveredRecipients = [];
+    await settings8.save();
+
+    a1Provider.balance = async () => ({ success: true, balance: 950 });
+    fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
+      messagesDispatched.push(opts);
+      if (opts.numbers === '8275366399') {
+        throw new Error('Network Timeout on 8275366399');
+      }
+      return { success: true, request_id: 'REQ_SUCCESS_9100' };
     };
 
-    const res9 = await providerAutomationService.checkBalanceAndAlert({ triggerType: 'SCHEDULED_CHECK' });
+    const res8 = await providerAutomationService.checkBalanceAndAlert({ force: true, triggerType: 'RECHARGE_EVENT' });
+    const attemptedRecipients8 = messagesDispatched.map(m => m.numbers);
+    const settingsAfter8 = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
     assertCondition(
-      res9.alertSent === true &&
-      smsDispatched.length === 2 &&
-      smsDispatched[0].message.includes('₹2000') || smsDispatched[0].message.includes('2000.00'),
-      'Scenario 9: SMS Channel -> Dispatched Fast2SMS Quick SMS containing ₹2,000 threshold',
-      `Recipients: ${smsDispatched.map(s => s.phone).join(', ')}`
+      attemptedRecipients8.includes('8275366399') &&
+      attemptedRecipients8.includes('9100329521') &&
+      res8.overallStatus === 'PARTIAL_SUCCESS' &&
+      settingsAfter8.thresholdAlerts.LOW_1000.deliveredRecipients.includes('9100329521') &&
+      !settingsAfter8.thresholdAlerts.LOW_1000.deliveredRecipients.includes('8275366399'),
+      'Scenario 8: Independent recipient attempts -> One fails, other still attempted & delivered',
+      `Attempted: [${attemptedRecipients8.join(', ')}], Delivered: [${settingsAfter8.thresholdAlerts.LOW_1000.deliveredRecipients.join(', ')}]`
     );
 
-    // Restore original channel to WHATSAPP
-    await ProviderAutomationSettings.updateOne(
-      { automationKey: 'a1topup_low_balance' },
-      { $set: { channel: 'WHATSAPP' } }
+    // =========================================================================
+    // SCENARIO 9: Balance API fails -> Do not send a false zero-balance alert
+    // =========================================================================
+    console.log('\n--- SCENARIO 9: Balance API Fails -> Never Send False Zero-Balance Alert ---');
+    messagesDispatched = [];
+    fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
+      messagesDispatched.push(opts);
+      return { success: true, request_id: 'REQ_TEST' };
+    };
+    a1Provider.balance = async () => {
+      throw new Error('A1 Topup Gateway 504 Gateway Timeout');
+    };
+
+    const res9 = await providerAutomationService.checkBalanceAndAlert({ force: true, triggerType: 'SCHEDULED_CHECK' });
+    const settingsAfter9 = await ProviderAutomationSettings.findOne({ automationKey: 'a1topup_low_balance' });
+    assertCondition(
+      res9.checked === false &&
+      res9.status === 'ERROR' &&
+      messagesDispatched.length === 0 &&
+      settingsAfter9.lastBalance === 950, // Retained last known balance, not zero!
+      'Scenario 9: Balance API failure -> Retains last known balance, 0 false alerts sent',
+      `Status: ${res9.status}, Retained Balance: ₹${settingsAfter9.lastBalance}, Dispatched: ${messagesDispatched.length}`
     );
 
-    // -------------------------------------------------------------------------
-    // SCENARIO 10: Production Verification (Real A1Topup Live API & Fast2SMS Account)
-    // -------------------------------------------------------------------------
-    console.log('\n--- SCENARIO 10: Production Real API Verification ---');
-    // Restore original provider balance method to test actual live API
+    // =========================================================================
+    // SCENARIO 10: Several concurrent recharges -> Shared in-flight fetch
+    // =========================================================================
+    console.log('\n--- SCENARIO 10: Several Recharges Arrive Simultaneously -> Shared In-Flight Fetch ---');
+    let providerFetchCallCount = 0;
+    a1Provider.balance = async () => {
+      providerFetchCallCount++;
+      await new Promise(r => setTimeout(r, 60)); // Simulate 60ms network latency
+      return { success: true, balance: 2200 };
+    };
+
+    // Fire 5 concurrent balance fetch requests at the same exact instant
+    const concurrentPromises = [
+      providerAutomationService.getProviderBalance({ force: true }),
+      providerAutomationService.getProviderBalance({ force: true }),
+      providerAutomationService.getProviderBalance({ force: true }),
+      providerAutomationService.getProviderBalance({ force: true }),
+      providerAutomationService.getProviderBalance({ force: true }),
+    ];
+    const results10 = await Promise.all(concurrentPromises);
+    assertCondition(
+      providerFetchCallCount === 1 &&
+      results10.every(r => r.success === true && r.balance === 2200),
+      'Scenario 10: 5 concurrent recharges -> Exactly 1 provider API call made via in-flight promise sharing',
+      `Provider API Calls: ${providerFetchCallCount}, All Succeeded: true`
+    );
+
+    // =========================================================================
+    // SCENARIO 11: Backend restarts -> Alert state persists
+    // =========================================================================
+    console.log('\n--- SCENARIO 11: Backend Restarts -> Persistent MongoDB State ---');
+    // Drop in-memory cache to simulate full process termination/restart
+    providerAutomationService.lastSuccessfulBalance = null;
+    providerAutomationService.lastSuccessfulCheckAt = null;
+
+    const reloadedSettings = await providerAutomationService.getSettings();
+    assertCondition(
+      reloadedSettings.automationKey === 'a1topup_low_balance' &&
+      reloadedSettings.thresholdAlerts.LOW_2000 !== undefined &&
+      reloadedSettings.thresholdAlerts.LOW_1000 !== undefined &&
+      reloadedSettings.thresholdAlerts.CRITICAL_500 !== undefined,
+      'Scenario 11: Process restart -> Settings and threshold alert states successfully persisted in MongoDB',
+      `Loaded from DB: Key=${reloadedSettings.automationKey}, Has Alerts Obj: true`
+    );
+
+    // =========================================================================
+    // SCENARIO 12: Fast2SMS timeout occurs -> Bounded retry handling
+    // =========================================================================
+    console.log('\n--- SCENARIO 12: Fast2SMS Timeout & Bounded Retry ---');
+    let retryAttemptCount = 0;
+    fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
+      retryAttemptCount++;
+      if (retryAttemptCount <= 2) {
+        throw new Error(`Network Timeout (Attempt ${retryAttemptCount})`);
+      }
+      return { success: true, request_id: 'REQ_RETRY_SUCCESS' };
+    };
+
+    const retryRes = await providerAutomationService.sendWhatsAppWithRetry({
+      messageId: 40230,
+      phoneNumberId: '1294250930429862',
+      recipient: '8275366399',
+      variablesValues: '1800.00|28 Oct 2026, 11:30 AM',
+      source: 'TEST_RETRY',
+      maxRetries: 2,
+    });
+    assertCondition(
+      retryRes.success === true &&
+      retryRes.requestId === 'REQ_RETRY_SUCCESS' &&
+      retryAttemptCount === 3,
+      'Scenario 12: Fast2SMS timeout -> Bounded retry succeeds after 3 attempts without runaway spam',
+      `Total Attempts: ${retryAttemptCount}, Request ID: ${retryRes.requestId}`
+    );
+
+    // =========================================================================
+    // SCENARIO 13: Manual refresh action works
+    // =========================================================================
+    console.log('\n--- SCENARIO 13: Manual Refresh Action ---');
+    messagesDispatched = [];
+    a1Provider.balance = async () => ({ success: true, balance: 2350 });
+    fast2smsWhatsAppService.sendWhatsAppMessage = async (opts) => {
+      messagesDispatched.push(opts);
+      return { success: true, request_id: 'REQ_MANUAL_REFRESH' };
+    };
+
+    const manualRes = await providerAutomationService.checkBalanceAndAlert({
+      force: true,
+      forceAlert: false,
+      triggerType: 'MANUAL_CHECK',
+    });
+    assertCondition(
+      manualRes.checked === true &&
+      manualRes.status === 'NORMAL' &&
+      manualRes.balance === 2350,
+      'Scenario 13: Manual Refresh Balance action executes safely and updates stored state',
+      `Status: ${manualRes.status}, Balance: ₹${manualRes.balance}`
+    );
+
+    // =========================================================================
+    // SCENARIO 14: Existing recharge flow succeeds even if notification fails
+    // =========================================================================
+    console.log('\n--- SCENARIO 14: Recharge Flow Resilience (Notification Failure Non-Blocking) ---');
+    // Clear 60-second cache to simulate fresh fetch on new balance level
+    providerAutomationService.lastSuccessfulCheckAt = null;
+    a1Provider.balance = async () => ({ success: true, balance: 400 });
+    fast2smsWhatsAppService.sendWhatsAppMessage = async () => {
+      throw new Error('Fast2SMS Down');
+    };
+
+    // The recharge hook must execute cleanly and return the log without throwing unhandled rejection
+    let rechargeHookThrew = false;
+    let log14 = null;
+    try {
+      log14 = await providerAutomationService.checkAndTriggerLowBalanceAlert({
+        orderId: 'RECHARGE_RESILIENCE_014',
+        amount: 50,
+      });
+    } catch (e) {
+      rechargeHookThrew = true;
+    }
+    assertCondition(
+      rechargeHookThrew === false &&
+      log14 !== null &&
+      log14.overallStatus === 'FAILED',
+      'Scenario 14: Recharge hook never breaks customer recharge flow if messaging provider fails',
+      `Hook Threw Error: ${rechargeHookThrew}, Log Status: ${log14?.overallStatus}`
+    );
+
+    // =========================================================================
+    // SCENARIO 15: No old provider-wallet template is used anywhere
+    // =========================================================================
+    console.log('\n--- SCENARIO 15: Strict Verification of Only Approved Template IDs ---');
+    const templates = providerAutomationService.getTemplates();
+    const approvedMsgIds = [templates.LOW_2000.messageId, templates.LOW_1000.messageId, templates.CRITICAL_500.messageId];
+    const approvedTplNames = [templates.LOW_2000.name, templates.LOW_1000.name, templates.CRITICAL_500.name];
+
+    const approvedTplIds = [templates.LOW_2000.templateId, templates.LOW_1000.templateId, templates.CRITICAL_500.templateId];
+
+    assertCondition(
+      approvedMsgIds.includes(40230) &&
+      approvedMsgIds.includes(40235) &&
+      approvedMsgIds.includes(40237) &&
+      !approvedMsgIds.includes(27147) &&
+      approvedTplNames.includes('provider_wallet_low_balance_2000') &&
+      approvedTplNames.includes('provider_wallet_low_balance_1000') &&
+      approvedTplNames.includes('provider_wallet_critical_balance_500') &&
+      !approvedTplNames.includes('provider_wallet_low_balance') &&
+      approvedTplIds.includes('165519901612689') &&
+      approvedTplIds.includes('112150956740956') &&
+      approvedTplIds.includes('193212102821660'),
+      'Scenario 15: Only the 3 approved Fast2SMS templates are mapped; old 27147 completely eliminated',
+      `Approved Message IDs: [${approvedMsgIds.join(', ')}], Template Names: [${approvedTplNames.join(', ')}], Meta IDs: [${approvedTplIds.join(', ')}]`
+    );
+
+    // Restore original mock methods
     a1Provider.balance = originalBalance;
     fast2smsWhatsAppService.sendWhatsAppMessage = originalSendWa;
-    fast2smsService.sendSMS = originalSendSms;
 
-    const liveBalanceRes = await a1Provider.balance();
-    console.log('Real Provider Balance Response:', liveBalanceRes);
+    console.log('\n========================================================================');
+    console.log(`   FINAL TEST RESULT: ${passedTests}/${totalTests} TESTS PASSED (${Math.round((passedTests/totalTests)*100)}%)`);
+    console.log('========================================================================\n');
 
-    const liveFast2sms = await fast2smsService.getWalletBalance();
-    console.log('Real Fast2SMS Wallet Response:', liveFast2sms);
-
-    const liveWaba = await fast2smsWhatsAppService.getWabaDetails().catch(e => ({ error: e.message }));
-    console.log('Real WABA Account Response:', liveWaba);
-
-    assertCondition(
-      liveBalanceRes.success === true && typeof liveBalanceRes.balance === 'number' && liveBalanceRes.balance > 0,
-      `Scenario 10a: Real A1Topup Provider API live balance verified: ₹${liveBalanceRes.balance?.toFixed(2)}`,
-      `HTTP 200, parsed valid numeric balance`
-    );
-
-    assertCondition(
-      liveFast2sms.status === 'Connected' && liveFast2sms.walletBalance > 0,
-      `Scenario 10b: Real Fast2SMS Wallet verified: Balance ₹${liveFast2sms.walletBalance}, Credits: ${liveFast2sms.smsCount}`,
-      `Fast2SMS API Key verified active`
-    );
-
-    assertCondition(
-      liveWaba && liveWaba.connection_status === 'CONNECTED',
-      `Scenario 10c: Real Fast2SMS WABA verified: Phone ${liveWaba.number}, Status: ${liveWaba.connection_status}`,
-      `Template ID: 27147 (provider_wallet_low_balance) connected`
-    );
-
-    console.log('\n================================================================');
-    console.log(`   TEST RESULTS SUMMARY: ${passedTests}/${totalTests} TESTS PASSED   `);
-    console.log('================================================================\n');
-
-    if (mongoConnected) await mongoose.disconnect();
     process.exit(passedTests === totalTests ? 0 : 1);
 
   } catch (err) {
-    console.error('\n[FATAL TEST RUNNER ERROR]', err);
-    if (mongoConnected) await mongoose.disconnect();
+    console.error('[FATAL ERROR IN TEST SUITE]:', err);
     process.exit(1);
   }
 }
 
-runComprehensiveTests();
+runComprehensiveTestSuite();

@@ -4,17 +4,18 @@ const ProviderAutomationLog = require('../../models/ProviderAutomationLog');
 const ProviderFactory = require('../../services/providers/provider.factory');
 const fast2smsWhatsAppService = require('../../services/fast2smsWhatsApp.service');
 
-// @desc    Get Provider Automation Settings & Status
+// @desc    Get Provider Automation Settings, Multi-Threshold Status & Fast2SMS Templates
 // @route   GET /api/admin/provider-automations/settings
 // @access  Private (Admin)
 const getSettings = async (req, res, next) => {
   try {
     const settings = await providerAutomationService.getSettings();
+    const templates = providerAutomationService.getTemplates();
 
-    // Calculate nextCheckAt if not present
-    let nextCheckAt = settings.nextCheckAt;
-    if (!nextCheckAt && settings.lastCheckAt) {
-      nextCheckAt = new Date(new Date(settings.lastCheckAt).getTime() + (settings.checkIntervalMinutes || 5) * 60 * 1000);
+    let nextReconcileAt = settings.nextReconcileAt;
+    if (!nextReconcileAt && settings.lastCheckAt) {
+      const minutes = settings.reconcileIntervalMinutes || 15;
+      nextReconcileAt = new Date(new Date(settings.lastCheckAt).getTime() + minutes * 60 * 1000);
     }
 
     res.status(200).json({
@@ -22,25 +23,29 @@ const getSettings = async (req, res, next) => {
       data: {
         enabled: settings.enabled,
         providerName: settings.providerName,
-        threshold: settings.threshold,
+        threshold: settings.threshold || 2000,
         recipients: settings.recipients,
         channel: settings.channel || 'WHATSAPP',
-        templateName: settings.templateName,
-        messageId: settings.messageId,
         phoneNumberId: settings.phoneNumberId,
-        checkIntervalMinutes: settings.checkIntervalMinutes || 5,
+        minRefreshSeconds: settings.minRefreshSeconds || 60,
+        reconcileIntervalMinutes: settings.reconcileIntervalMinutes || 15,
         monitoringStatus: settings.monitoringStatus || 'ACTIVE',
-        alertSent: settings.alertSent || false,
+        currentThresholdState: settings.currentThresholdState || 'UNKNOWN',
+        isRecovered: settings.isRecovered !== false,
+        lastRecoveredAt: settings.lastRecoveredAt || null,
+        thresholdAlerts: settings.thresholdAlerts || {},
+        lastBalance: settings.lastBalance,
         lastCheckAt: settings.lastCheckAt,
         lastSuccessfulCheckAt: settings.lastSuccessfulCheckAt || settings.lastCheckAt,
-        nextCheckAt,
+        nextReconcileAt,
         lastAlertAt: settings.lastAlertAt,
+        lastAlertLevel: settings.lastAlertLevel || null,
         lastAlertBalance: settings.lastAlertBalance,
-        lastBalance: settings.lastBalance,
-        lastStatus: settings.lastStatus || 'UNKNOWN',
+        lastStatus: settings.lastStatus || 'NORMAL',
         lastCheckError: settings.lastCheckError || null,
         lastMessagingError: settings.lastMessagingError || null,
         lastRecipientsStatus: settings.lastRecipientsStatus || [],
+        templates,
       }
     });
   } catch (error) {
@@ -53,25 +58,38 @@ const getSettings = async (req, res, next) => {
 // @access  Private (Admin)
 const updateSettings = async (req, res, next) => {
   try {
-    const { enabled, threshold, recipients, templateName, messageId, channel, checkIntervalMinutes } = req.body;
+    const {
+      enabled,
+      recipients,
+      channel,
+      minRefreshSeconds,
+      reconcileIntervalMinutes,
+    } = req.body;
+
     let settings = await providerAutomationService.getSettings();
 
     if (typeof enabled === 'boolean') {
       settings.enabled = enabled;
       settings.monitoringStatus = enabled ? 'ACTIVE' : 'DISABLED';
     }
-    if (typeof threshold === 'number' && threshold > 0) settings.threshold = threshold;
+
     if (Array.isArray(recipients)) {
-      const cleanRecipients = recipients.map(r => String(r).replace(/\D/g, '')).filter(r => r.length >= 10);
-      if (cleanRecipients.length > 0) settings.recipients = cleanRecipients;
+      const cleanRecipients = providerAutomationService.normalizePhoneNumbers(recipients);
+      if (cleanRecipients.length > 0) {
+        settings.recipients = cleanRecipients;
+      }
     }
-    if (templateName) settings.templateName = templateName;
-    if (messageId) settings.messageId = Number(messageId);
+
     if (channel && ['WHATSAPP', 'SMS'].includes(channel.toUpperCase())) {
       settings.channel = channel.toUpperCase();
     }
-    if (typeof checkIntervalMinutes === 'number' && checkIntervalMinutes > 0) {
-      settings.checkIntervalMinutes = checkIntervalMinutes;
+
+    if (typeof minRefreshSeconds === 'number' && minRefreshSeconds >= 5) {
+      settings.minRefreshSeconds = minRefreshSeconds;
+    }
+
+    if (typeof reconcileIntervalMinutes === 'number' && reconcileIntervalMinutes >= 1) {
+      settings.reconcileIntervalMinutes = reconcileIntervalMinutes;
     }
 
     settings.updatedBy = req.user?._id;
@@ -79,29 +97,31 @@ const updateSettings = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: 'Provider wallet automation settings updated successfully',
-      data: settings
+      message: 'Provider wallet monitoring settings updated successfully',
+      data: settings,
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Manual "Check Balance Now" action for administrators
+// @desc    Manual "Refresh Balance" action for administrators
+//          Fetches live balance, updates stored state, and evaluates thresholds safely (no duplicate spam).
 // @route   POST /api/admin/provider-automations/check-balance-now
 // @access  Private (Admin)
 const checkBalanceNow = async (req, res, next) => {
   try {
-    console.log('[Admin ProviderAutomation] Manual "Check Balance Now" triggered by admin:', req.user?.phone || req.user?.email || 'admin');
+    console.log('[Admin ProviderAutomation] Manual "Refresh Balance" triggered by admin:', req.user?.phone || req.user?.email || 'admin');
 
     const result = await providerAutomationService.checkBalanceAndAlert({
+      force: true,      // Bypass 60s cache to get live provider balance
+      forceAlert: req.body.forceAlert === true, // Only resend if specifically requested
       triggerType: 'MANUAL_CHECK',
-      force: req.body.force === true,
     });
 
     res.status(200).json({
       success: true,
-      message: 'Provider balance check completed successfully',
+      message: 'Provider balance refreshed successfully',
       data: result,
     });
   } catch (error) {
@@ -109,14 +129,13 @@ const checkBalanceNow = async (req, res, next) => {
   }
 };
 
-// @desc    External Scheduler / Cron Endpoint (Protected by secret token)
+// @desc    External Reconciliation / Cron Endpoint (Protected by secret token)
 // @route   POST or GET /api/admin/provider-automations/cron/check-balance
 // @access  Protected by A1TOPUP_MONITOR_SECRET / CRON_SECRET
 const handleCronCheck = async (req, res, next) => {
   try {
     const configuredSecret = process.env.A1TOPUP_MONITOR_SECRET || process.env.CRON_SECRET;
     
-    // Authorization validation: Check Header 'X-Cron-Secret', Bearer token, or query param
     const authHeader = req.headers.authorization || '';
     const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
     const headerSecret = req.headers['x-cron-secret'];
@@ -132,15 +151,13 @@ const handleCronCheck = async (req, res, next) => {
       });
     }
 
-    console.log('[Cron Scheduler] Authenticated external balance check triggered.');
+    console.log('[Cron Scheduler] Authenticated external reconciliation triggered.');
 
-    const result = await providerAutomationService.checkBalanceAndAlert({
-      triggerType: 'EXTERNAL_CRON',
-    });
+    const result = await providerAutomationService.runReconciliation();
 
     res.status(200).json({
       success: true,
-      message: 'Scheduled balance check executed',
+      message: 'Reconciliation check executed successfully',
       data: result,
     });
   } catch (error) {
@@ -171,7 +188,7 @@ const getLogs = async (req, res, next) => {
         total,
         page,
         limit,
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / limit),
       }
     });
   } catch (error) {
@@ -179,44 +196,39 @@ const getLogs = async (req, res, next) => {
   }
 };
 
-// @desc    Send Test Alert to specified test mobile number (WhatsApp or SMS)
+// @desc    Send Test Alert Preview to specified test mobile number using approved templates
 // @route   POST /api/admin/provider-automations/test
 // @access  Private (Admin)
 const sendTestAlert = async (req, res, next) => {
   try {
-    const { testNumber, channel: requestedChannel } = req.body;
+    const { testNumber, level = 'LOW_2000', channel: requestedChannel } = req.body;
     if (!testNumber) {
       return res.status(400).json({ success: false, message: 'Test mobile number is required' });
     }
 
-    const cleanNumber = String(testNumber).replace(/\D/g, '');
-    if (!cleanNumber || cleanNumber.length < 10) {
-      return res.status(400).json({ success: false, message: 'Invalid test mobile number' });
+    const cleanNumbers = providerAutomationService.normalizePhoneNumbers(testNumber);
+    if (cleanNumbers.length === 0) {
+      return res.status(400).json({ success: false, message: 'Invalid 10-digit test mobile number' });
     }
+    const cleanNumber = cleanNumbers[0];
+
+    const templates = providerAutomationService.getTemplates();
+    const targetConfig = templates[level] || templates.LOW_2000;
 
     const settings = await providerAutomationService.getSettings();
-    const provider = ProviderFactory.getProvider(settings.providerName || 'A1Topup');
-    let currentBalance = 1850.00; // Simulated test balance below ₹2000
-    try {
-      const balanceRes = await provider.balance();
-      if (balanceRes && balanceRes.success && typeof balanceRes.balance === 'number') {
-        currentBalance = balanceRes.balance;
-      }
-    } catch (e) {
-      console.warn('[Admin Test Alert] Could not fetch real balance, using preview fallback');
-    }
+    const balanceData = await providerAutomationService.getProviderBalance({ force: false }).catch(() => null);
+    const currentBalance = balanceData?.balance !== undefined ? balanceData.balance : (targetConfig.threshold - 50);
 
     const detectedAtIST = providerAutomationService.formatISTDate(new Date());
     const formattedBalance = currentBalance.toFixed(2);
-    const threshold = (settings.threshold || 2000).toFixed(2);
     const channel = requestedChannel ? requestedChannel.toUpperCase() : (settings.channel || 'WHATSAPP');
 
-    console.log(`[Admin Test Alert] Dispatching test ${channel} alert to ${cleanNumber}...`);
+    console.log(`[Admin Test Alert] Dispatching preview ${channel} alert (${targetConfig.name}) to ${providerAutomationService.maskPhone(cleanNumber)}...`);
 
     let dispatchResponse;
     if (channel === 'SMS') {
       const fast2smsService = require('../../services/fast2sms.service');
-      const smsMessage = `A1 Recharge Alert: Your A1Topup wallet balance is ₹${formattedBalance}, below the ₹${threshold} threshold. Detected at ${detectedAtIST}. Please replenish the provider wallet to avoid recharge failures.`;
+      const smsMessage = `A1 Recharge Alert: Your A1Topup wallet balance is ₹${formattedBalance}, at or below ₹${targetConfig.threshold}. Detected at ${detectedAtIST} IST. Please replenish provider wallet immediately.`;
       dispatchResponse = await fast2smsService.sendSMS({
         phone: cleanNumber,
         message: smsMessage,
@@ -228,23 +240,27 @@ const sendTestAlert = async (req, res, next) => {
     } else {
       const variablesValues = `${formattedBalance}|${detectedAtIST}`;
       dispatchResponse = await fast2smsWhatsAppService.sendWhatsAppMessage({
-        messageId: settings.messageId || 27147,
+        messageId: targetConfig.messageId,
         phoneNumberId: settings.phoneNumberId || '1294250930429862',
         numbers: cleanNumber,
         variablesValues,
-        source: 'ADMIN_TEST_AUTOMATION',
+        source: `ADMIN_TEST_${targetConfig.level}`,
         skipDbLog: false,
       });
     }
 
     res.status(200).json({
       success: true,
-      message: `Test ${channel} alert dispatched successfully to ${cleanNumber}`,
+      message: `Test ${channel} alert (${targetConfig.name}) dispatched successfully to ${cleanNumber}`,
       data: {
         recipient: cleanNumber,
         channel,
+        level: targetConfig.level,
+        templateName: targetConfig.name,
+        templateId: targetConfig.templateId,
+        messageId: targetConfig.messageId,
         balance: formattedBalance,
-        threshold,
+        threshold: targetConfig.threshold,
         response: dispatchResponse,
       }
     });

@@ -1,41 +1,46 @@
 const providerAutomationService = require('../services/providerAutomation.service');
 
 const logger = {
-  info: (...args) => console.log('[A1TOPUP MONITOR WORKER]', ...args),
-  error: (...args) => console.error('[A1TOPUP MONITOR WORKER ERROR]', ...args),
+  info: (...args) => console.log('[A1TOPUP RECONCILIATION WORKER]', ...args),
+  error: (...args) => console.error('[A1TOPUP RECONCILIATION WORKER ERROR]', ...args),
 };
 
 let intervalId = null;
 
 /**
- * Start the 5-minute A1Topup Wallet Balance Monitor Worker
- * Executes independently of any frontend or browser activity.
+ * Start the 15-minute A1Topup Wallet Reconciliation Fallback Worker.
+ * Event-driven recharges handle real-time balance checks;
+ * this fallback reconciliation catches manual adjustments, bank deductions, or missed events.
+ * Uses distributed locking to ensure only one instance executes across multi-instance clusters.
  */
 const start = (overrideMinutes = null) => {
   if (intervalId) {
-    logger.info('Worker is already running. Skipping duplicate startup.');
+    logger.info('Reconciliation worker is already running. Skipping duplicate startup.');
     return;
   }
 
-  const intervalMinutes = overrideMinutes || parseInt(process.env.A1TOPUP_WALLET_CHECK_INTERVAL_MINUTES || '5', 10);
-  const intervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
+  const reconcileMinutes = overrideMinutes || parseInt(
+    process.env.PROVIDER_WALLET_BALANCE_RECONCILE_MINUTES ||
+    process.env.A1TOPUP_WALLET_CHECK_INTERVAL_MINUTES ||
+    '15',
+    10
+  );
+  const intervalMs = Math.max(1, reconcileMinutes) * 60 * 1000;
 
-  const runCheck = async () => {
+  const runReconciliation = async () => {
     try {
-      await providerAutomationService.checkBalanceAndAlert({
-        triggerType: 'SCHEDULED_CHECK',
-      });
+      await providerAutomationService.runReconciliation();
     } catch (err) {
-      logger.error('Scheduled balance check execution error:', err.message);
+      logger.error('Fallback reconciliation execution error:', err.message);
     }
   };
 
-  // Initial check 15 seconds after server boot to allow DB connection to stabilize
-  setTimeout(runCheck, 15000);
+  // Initial check 15 seconds after server boot to allow MongoDB connection to stabilize
+  setTimeout(runReconciliation, 15000);
 
-  // Periodic interval execution (every 5 minutes by default)
-  intervalId = setInterval(runCheck, intervalMs);
-  logger.info(`A1Topup low-wallet balance monitor started (Interval: ${intervalMinutes} minutes)`);
+  // Periodic interval execution (default every 15 minutes)
+  intervalId = setInterval(runReconciliation, intervalMs);
+  logger.info(`A1Topup wallet fallback reconciliation worker started (Interval: ${reconcileMinutes} minutes)`);
 };
 
 /**
@@ -45,7 +50,7 @@ const stop = () => {
   if (intervalId) {
     clearInterval(intervalId);
     intervalId = null;
-    logger.info('A1Topup low-wallet balance monitor stopped');
+    logger.info('A1Topup wallet fallback reconciliation worker stopped');
   }
 };
 

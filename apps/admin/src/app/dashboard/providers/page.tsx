@@ -14,7 +14,7 @@ import {
   Loader2, Server, RefreshCw, AlertTriangle, ShieldCheck, Clock, 
   Zap, Bell, CheckCircle, XCircle, Send, Check, Phone, Settings, 
   History, Sliders, Info, MessageSquare, AlertCircle, ArrowUpRight,
-  Radio, CheckCheck
+  Radio, CheckCheck, ShieldAlert, Sparkles
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 
@@ -42,29 +42,30 @@ export default function ProvidersPage() {
   // Test Alert Modal State
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [testNumberInput, setTestNumberInput] = useState("8275366399");
+  const [testLevelInput, setTestLevelInput] = useState<"LOW_2000" | "LOW_1000" | "CRITICAL_500">("LOW_2000");
   const [testChannelInput, setTestChannelInput] = useState<"WHATSAPP" | "SMS">("WHATSAPP");
   const [toastMsg, setToastMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // Editable Form State for Automations
-  const [thresholdInput, setThresholdInput] = useState<number>(2000);
   const [recipientsInput, setRecipientsInput] = useState<string>("8275366399, 9100329521");
   const [channelInput, setChannelInput] = useState<"WHATSAPP" | "SMS">("WHATSAPP");
-  const [intervalInput, setIntervalInput] = useState<number>(5);
+  const [minRefreshInput, setMinRefreshInput] = useState<number>(60);
+  const [reconcileIntervalInput, setReconcileIntervalInput] = useState<number>(15);
 
   useEffect(() => {
     if (autoSettings) {
-      if (autoSettings.threshold !== undefined) setThresholdInput(autoSettings.threshold);
       if (autoSettings.recipients && autoSettings.recipients.length > 0) {
         setRecipientsInput(autoSettings.recipients.join(", "));
       }
       if (autoSettings.channel) setChannelInput(autoSettings.channel);
-      if (autoSettings.checkIntervalMinutes) setIntervalInput(autoSettings.checkIntervalMinutes);
+      if (autoSettings.minRefreshSeconds) setMinRefreshInput(autoSettings.minRefreshSeconds);
+      if (autoSettings.reconcileIntervalMinutes) setReconcileIntervalInput(autoSettings.reconcileIntervalMinutes);
     }
   }, [autoSettings]);
 
   const showToast = (text: string, isError = false) => {
     setToastMsg({ text, isError });
-    setTimeout(() => setToastMsg(null), 4000);
+    setTimeout(() => setToastMsg(null), 4500);
   };
 
   const handleSync = (providerId: string) => {
@@ -74,26 +75,26 @@ export default function ProvidersPage() {
     });
   };
 
-  const handleManualCheck = (force = false) => {
-    checkBalanceNow({ force }, {
+  const handleManualRefresh = () => {
+    checkBalanceNow({ force: true }, {
       onSuccess: (res: any) => {
         const d = res?.data;
         if (d?.status === "NORMAL") {
-          showToast(`Balance verified: ₹${d.balance?.toFixed(2)} (Safe, >= ₹${d.threshold})`);
-        } else if (d?.status === "LOW_BALANCE") {
-          if (d.alertSent) {
-            showToast(`Critical: Balance is ₹${d.balance?.toFixed(2)} (< ₹${d.threshold}). Alerts dispatched!`, true);
-          } else {
-            showToast(`Balance is ₹${d.balance?.toFixed(2)} (< ₹${d.threshold}). Duplicate suppressed.`, true);
-          }
+          showToast(`Balance refreshed: ₹${d.balance?.toFixed(2)} (Normal, Safe > ₹2,000)`);
+        } else if (d?.status === "LOW_2000") {
+          showToast(`Balance is ₹${d.balance?.toFixed(2)} (₹2,000 Warning Level). ${d.alertSent ? 'Alert dispatched!' : 'Duplicate suppressed.'}`, !d.alertSent ? false : true);
+        } else if (d?.status === "LOW_1000") {
+          showToast(`High-Priority: Balance is ₹${d.balance?.toFixed(2)} (₹1,000 Alert Level). ${d.alertSent ? 'Alert dispatched!' : 'Duplicate suppressed.'}`, true);
+        } else if (d?.status === "CRITICAL_500") {
+          showToast(`CRITICAL: Balance is ₹${d.balance?.toFixed(2)} (₹500 Critical Level). ${d.alertSent ? 'Critical alert dispatched!' : 'Duplicate suppressed.'}`, true);
         } else if (d?.status === "ERROR") {
           showToast(`Provider API error: ${d.error || "Unreachable"}`, true);
         } else {
-          showToast("Balance check finished successfully.");
+          showToast("Balance refresh completed.");
         }
       },
       onError: (err: any) => {
-        showToast(err?.response?.data?.message || err.message || "Manual check failed", true);
+        showToast(err?.response?.data?.message || err.message || "Manual refresh failed", true);
       }
     });
   };
@@ -107,12 +108,12 @@ export default function ProvidersPage() {
     }
 
     updateSettings({
-      threshold: thresholdInput,
       recipients: cleanRecipients,
       channel: channelInput,
-      checkIntervalMinutes: intervalInput,
+      minRefreshSeconds: minRefreshInput,
+      reconcileIntervalMinutes: reconcileIntervalInput,
     }, {
-      onSuccess: () => showToast("A1Topup monitoring rules saved successfully!"),
+      onSuccess: () => showToast("A1Topup monitoring settings saved successfully!"),
       onError: (err: any) => showToast(err?.response?.data?.message || err.message || "Failed to update settings", true)
     });
   };
@@ -128,14 +129,20 @@ export default function ProvidersPage() {
     e.preventDefault();
     if (!testNumberInput.trim()) return;
 
-    sendTestAlert(testNumberInput.trim(), {
+    sendTestAlert({
+      testNumber: testNumberInput.trim(),
+      level: testLevelInput,
+      channel: testChannelInput,
+    }, {
       onSuccess: () => {
         setIsTestModalOpen(false);
-        showToast(`Test ${testChannelInput} alert sent to ${testNumberInput}`);
+        showToast(`Test ${testChannelInput} preview for ${testLevelInput} sent to ${testNumberInput}`);
       },
       onError: (err: any) => showToast(err?.response?.data?.message || err.message || "Test dispatch failed", true)
     });
   };
+
+  const currentLevel = autoSettings?.currentThresholdState || 'NORMAL';
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-20 animate-in fade-in duration-300">
@@ -158,7 +165,7 @@ export default function ProvidersPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <PageHeader 
           title="Providers & Gateway Monitoring"
-          description="Continuous 5-minute background balance monitoring, automated threshold alerts, and gateway synchronization."
+          description="Event-driven balance monitoring with 15-minute fallback reconciliation and approved Fast2SMS WhatsApp templates."
         />
 
         {/* Tab Switcher */}
@@ -172,7 +179,7 @@ export default function ProvidersPage() {
             }`}
           >
             <Zap className="w-3.5 h-3.5 text-amber-500" />
-            <span>Low Balance Monitor (Every 5m)</span>
+            <span>A1Topup Wallet Monitor (3 Templates)</span>
           </button>
           <button
             onClick={() => setActiveTab("providers")}
@@ -220,8 +227,8 @@ export default function ProvidersPage() {
                       <Zap className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="text-base font-extrabold text-slate-900 dark:text-white">A1Topup Low Wallet Alert</h3>
-                      <p className="text-xs text-slate-400 font-medium">Automatic 5-min server background worker</p>
+                      <h3 className="text-base font-extrabold text-slate-900 dark:text-white">A1Topup Wallet Monitor</h3>
+                      <p className="text-xs text-slate-400 font-medium">Event-driven + 15m reconciliation</p>
                     </div>
                   </div>
 
@@ -253,8 +260,12 @@ export default function ProvidersPage() {
 
                   <div className="flex items-baseline gap-2">
                     <span className={`text-3xl font-black font-mono tracking-tight ${
-                      autoSettings?.lastStatus === 'LOW_BALANCE' 
-                        ? 'text-rose-600 dark:text-rose-400' 
+                      currentLevel === 'CRITICAL_500'
+                        ? 'text-red-600 dark:text-red-400 animate-pulse'
+                        : currentLevel === 'LOW_1000'
+                        ? 'text-orange-600 dark:text-orange-400'
+                        : currentLevel === 'LOW_2000'
+                        ? 'text-amber-600 dark:text-amber-400'
                         : 'text-slate-900 dark:text-white'
                     }`}>
                       {autoSettings?.lastBalance !== undefined && autoSettings?.lastBalance !== null
@@ -264,55 +275,64 @@ export default function ProvidersPage() {
                     <span className="text-xs text-slate-400 font-medium">INR</span>
                   </div>
 
-                  {/* Status Banner */}
-                  {autoSettings?.lastStatus === 'LOW_BALANCE' ? (
-                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold border border-rose-200 dark:border-rose-900/40">
-                      <AlertTriangle className="w-4 h-4 shrink-0 text-rose-500" />
-                      <span>BELOW THRESHOLD (&lt; ₹{autoSettings?.threshold || 2000})</span>
+                  {/* Dynamic Alert Level Badge */}
+                  {currentLevel === 'CRITICAL_500' ? (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-red-100 dark:bg-red-950/60 text-red-800 dark:text-red-200 text-xs font-black border border-red-300 dark:border-red-900">
+                      <ShieldAlert className="w-4 h-4 shrink-0 text-red-600 animate-bounce" />
+                      <span>CRITICAL ALERT (≤ ₹500) — Immediate Recharge Needed</span>
                     </div>
-                  ) : autoSettings?.lastStatus === 'NORMAL' ? (
-                    <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
-                      <CheckCircle className="w-4 h-4 shrink-0 text-emerald-500" />
-                      <span>Balance Healthy (&ge; ₹{autoSettings?.threshold || 2000})</span>
+                  ) : currentLevel === 'LOW_1000' ? (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-orange-100 dark:bg-orange-950/50 text-orange-800 dark:text-orange-200 text-xs font-black border border-orange-300 dark:border-orange-900">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-orange-600" />
+                      <span>HIGH-PRIORITY ALERT (₹500.01 – ₹1,000)</span>
+                    </div>
+                  ) : currentLevel === 'LOW_2000' ? (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-200 text-xs font-bold border border-amber-300 dark:border-amber-900">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                      <span>LOW BALANCE WARNING (₹1,000.01 – ₹2,000)</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-100 text-slate-600 text-xs font-semibold">
-                      <Info className="w-4 h-4 shrink-0 text-slate-400" />
-                      <span>Checking provider balance...</span>
+                    <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-200 dark:border-emerald-900/40">
+                      <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-500" />
+                      <span>Wallet Healthy (&gt; ₹2,000)</span>
                     </div>
                   )}
                 </div>
 
-                {/* Real-time Scheduler Metadata */}
+                {/* Real-time Metadata */}
                 <div className="space-y-2 text-xs font-medium text-slate-600 dark:text-slate-300 pt-1">
                   <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-400">Monitoring Interval</span>
+                    <span className="text-slate-400">Current Alert Level</span>
+                    <span className="font-bold font-mono">
+                      {currentLevel === 'CRITICAL_500' ? 'CRITICAL (≤ ₹500)' :
+                       currentLevel === 'LOW_1000' ? 'HIGH-PRIORITY (≤ ₹1,000)' :
+                       currentLevel === 'LOW_2000' ? 'WARNING (< ₹2,000)' : 'NORMAL (SAFE)'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                    <span className="text-slate-400">Fallback Reconciliation</span>
                     <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-blue-500" /> Every {autoSettings?.checkIntervalMinutes || 5} Minutes
+                      <Clock className="w-3.5 h-3.5 text-blue-500" /> Every {autoSettings?.reconcileIntervalMinutes || 15} min
                     </span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-400">Next Scheduled Check</span>
+                    <span className="text-slate-400">Next Reconciliation</span>
                     <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">
-                      {autoSettings?.nextCheckAt 
-                        ? formatDistanceToNow(new Date(autoSettings.nextCheckAt), { addSuffix: true })
-                        : "In ~5 minutes"}
+                      {autoSettings?.nextReconcileAt 
+                        ? formatDistanceToNow(new Date(autoSettings.nextReconcileAt), { addSuffix: true })
+                        : "In ~15 minutes"}
                     </span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-400">Alert Threshold</span>
-                    <span className="font-bold text-amber-600 font-mono">₹{autoSettings?.threshold || 2000}</span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-400">Last Low Alert Sent</span>
+                    <span className="text-slate-400">Last Notification Sent</span>
                     <span className="font-mono text-slate-700 dark:text-slate-300">
                       {autoSettings?.lastAlertAt 
-                        ? format(new Date(autoSettings.lastAlertAt), 'dd MMM, hh:mm a')
-                        : 'No active low-balance alert'}
+                        ? `${format(new Date(autoSettings.lastAlertAt), 'dd MMM, hh:mm a')} (${autoSettings.lastAlertLevel || 'Alert'})`
+                        : 'No alert sent in current cycle'}
                     </span>
                   </div>
                   <div className="flex justify-between py-1">
-                    <span className="text-slate-400">Alert Channel</span>
+                    <span className="text-slate-400">Channel</span>
                     <span className="font-bold text-slate-900 dark:text-white uppercase">
                       {autoSettings?.channel || 'WHATSAPP'}
                     </span>
@@ -339,8 +359,8 @@ export default function ProvidersPage() {
                             <span>{phone}</span>
                           </div>
                           {isSent ? (
-                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <CheckCheck className="w-3 h-3" /> SENT
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950 px-2 py-0.5 rounded-full flex items-center gap-1" title={statusObj?.requestId ? `Accepted: ${statusObj.requestId}` : 'Accepted'}>
+                              <CheckCheck className="w-3 h-3" /> SENT {statusObj?.requestId ? `(${statusObj.requestId.slice(0, 8)})` : ''}
                             </span>
                           ) : isFailed ? (
                             <span className="text-[10px] font-bold text-rose-600 bg-rose-50 dark:bg-rose-950 px-2 py-0.5 rounded-full flex items-center gap-1" title={statusObj?.errorDetails || 'Failed'}>
@@ -358,15 +378,15 @@ export default function ProvidersPage() {
                 </div>
               </div>
 
-              {/* Action Buttons: Check Balance Now & Send Test */}
+              {/* Action Buttons: Refresh Balance & Send Test */}
               <div className="space-y-2 pt-2">
                 <Button
-                  onClick={() => handleManualCheck(false)}
+                  onClick={handleManualRefresh}
                   disabled={isCheckingBalanceNow}
                   className="w-full h-11 rounded-xl font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white shadow-md flex items-center justify-center gap-2"
                 >
                   <RefreshCw className={`w-4 h-4 ${isCheckingBalanceNow ? 'animate-spin' : ''}`} />
-                  {isCheckingBalanceNow ? 'Checking Live Provider Balance...' : 'Check Balance Now'}
+                  {isCheckingBalanceNow ? 'Fetching Live Provider Balance...' : 'Refresh Balance'}
                 </Button>
 
                 <Button
@@ -379,58 +399,144 @@ export default function ProvidersPage() {
               </div>
             </div>
 
-            {/* Card 2 & 3: Configuration Form */}
+            {/* Card 2 & 3: Approved WhatsApp Templates & Configuration */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm lg:col-span-2 space-y-6">
-              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-                    <Sliders className="w-4 h-4 text-blue-500" /> Automation Rules & Recipients
-                  </h3>
-                  <p className="text-xs text-slate-400 font-medium">Configure threshold limits, recipient phone numbers, and notification channel.</p>
-                </div>
+              
+              <div className="border-b border-slate-100 dark:border-slate-800 pb-4">
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-emerald-500" /> Approved Fast2SMS WhatsApp Templates
+                </h3>
+                <p className="text-xs text-slate-400 font-medium mt-0.5">
+                  The provider-wallet monitor uses only these 3 Meta-approved WhatsApp Utility templates.
+                </p>
               </div>
 
-              <form onSubmit={handleSaveSettings} className="space-y-5">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  
-                  {/* Threshold Input */}
-                  <div>
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-                      Low Balance Alert Threshold (INR) *
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-mono font-bold text-sm">₹</span>
-                      <input
-                        type="number"
-                        min={100}
-                        max={100000}
-                        value={thresholdInput}
-                        onChange={(e) => setThresholdInput(Number(e.target.value))}
-                        className="w-full pl-8 pr-4 h-11 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+              {/* Three Templates Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                
+                {/* Template 1: 2000 */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex flex-col justify-between space-y-2.5">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase text-amber-600 tracking-wider">Warning</span>
+                      <Badge variant="outline" className="text-[9px] font-mono">&lt; ₹2,000</Badge>
                     </div>
-                    <p className="text-[11px] text-slate-400 font-medium mt-1">Alert triggers when balance drops below ₹{thresholdInput}</p>
+                    <div className="font-mono text-xs font-bold text-slate-900 dark:text-white">
+                      provider_wallet_low_balance_2000
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      MsgID: 40230 • Meta: 165519901612689
+                    </div>
                   </div>
+                  <div className="text-[10px] text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900/80 p-2 rounded-xl border border-slate-200 dark:border-slate-800 font-mono leading-relaxed line-clamp-4">
+                    ⚠️ Your A1Topup wallet balance is below ₹2,000.<br/>
+                    Current Balance: ₹&#123;&#123;1&#125;&#125;<br/>
+                    Date &amp; Time: &#123;&#123;2&#125;&#125; IST
+                  </div>
+                  <div className="text-[10px] font-bold text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-700">
+                    <span>Range: ₹1,000.01 – ₹2,000</span>
+                    <span className={`w-2 h-2 rounded-full ${currentLevel === 'LOW_2000' ? 'bg-amber-500 animate-ping' : 'bg-slate-300'}`} />
+                  </div>
+                </div>
 
-                  {/* Check Interval */}
+                {/* Template 2: 1000 */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex flex-col justify-between space-y-2.5">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase text-orange-600 tracking-wider">High Priority</span>
+                      <Badge variant="outline" className="text-[9px] font-mono">≤ ₹1,000</Badge>
+                    </div>
+                    <div className="font-mono text-xs font-bold text-slate-900 dark:text-white">
+                      provider_wallet_low_balance_1000
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      MsgID: 40235 • Meta: 112150956740956
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900/80 p-2 rounded-xl border border-slate-200 dark:border-slate-800 font-mono leading-relaxed line-clamp-4">
+                    🚨 Your A1Topup provider wallet balance has fallen to ₹1,000 or below.<br/>
+                    Current Balance: ₹&#123;&#123;1&#125;&#125;<br/>
+                    Detected At: &#123;&#123;2&#125;&#125; IST
+                  </div>
+                  <div className="text-[10px] font-bold text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-700">
+                    <span>Range: ₹500.01 – ₹1,000</span>
+                    <span className={`w-2 h-2 rounded-full ${currentLevel === 'LOW_1000' ? 'bg-orange-500 animate-ping' : 'bg-slate-300'}`} />
+                  </div>
+                </div>
+
+                {/* Template 3: 500 */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex flex-col justify-between space-y-2.5">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase text-red-600 tracking-wider">Critical</span>
+                      <Badge variant="outline" className="text-[9px] font-mono text-red-500 border-red-300">≤ ₹500</Badge>
+                    </div>
+                    <div className="font-mono text-xs font-bold text-slate-900 dark:text-white">
+                      provider_wallet_critical_balance_500
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      MsgID: 40237 • Meta: 193212102821660
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900/80 p-2 rounded-xl border border-slate-200 dark:border-slate-800 font-mono leading-relaxed line-clamp-4">
+                    🆘 CRITICAL: Your A1Topup provider wallet balance has fallen to ₹500 or below.<br/>
+                    Current Balance: ₹&#123;&#123;1&#125;&#125;<br/>
+                    Detected At: &#123;&#123;2&#125;&#125; IST
+                  </div>
+                  <div className="text-[10px] font-bold text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-700">
+                    <span>Range: ₹0 – ₹500</span>
+                    <span className={`w-2 h-2 rounded-full ${currentLevel === 'CRITICAL_500' ? 'bg-red-500 animate-ping' : 'bg-slate-300'}`} />
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Automation Rules Configuration Form */}
+              <form onSubmit={handleSaveSettings} className="space-y-5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                    <Sliders className="w-3.5 h-3.5 text-blue-500" /> Automation Tuning &amp; Notification Settings
+                  </h4>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Min Refresh Interval */}
                   <div>
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-                      Check Interval (Minutes)
+                      Min Refresh Interval (Seconds)
                     </label>
                     <div className="relative">
                       <Clock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                       <input
                         type="number"
-                        min={1}
-                        max={60}
-                        value={intervalInput}
-                        onChange={(e) => setIntervalInput(Number(e.target.value))}
-                        className="w-full pl-10 pr-4 h-11 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        min={10}
+                        max={600}
+                        value={minRefreshInput}
+                        onChange={(e) => setMinRefreshInput(Number(e.target.value))}
+                        className="w-full pl-10 pr-4 h-11 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
-                    <p className="text-[11px] text-slate-400 font-medium mt-1">Runs continuous server checks every {intervalInput} minutes</p>
+                    <p className="text-[11px] text-slate-400 font-medium mt-1">Reuses cached balance within {minRefreshInput}s to protect provider API</p>
                   </div>
 
+                  {/* Fallback Reconcile Interval */}
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
+                      Fallback Reconciliation (Minutes)
+                    </label>
+                    <div className="relative">
+                      <Clock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="number"
+                        min={5}
+                        max={120}
+                        value={reconcileIntervalInput}
+                        onChange={(e) => setReconcileIntervalInput(Number(e.target.value))}
+                        className="w-full pl-10 pr-4 h-11 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <p className="text-[11px] text-slate-400 font-medium mt-1">Catches manual deductions &amp; missed events every {reconcileIntervalInput} minutes</p>
+                  </div>
                 </div>
 
                 {/* Recipients Input */}
@@ -445,13 +551,13 @@ export default function ProvidersPage() {
                       placeholder="8275366399, 9100329521"
                       value={recipientsInput}
                       onChange={(e) => setRecipientsInput(e.target.value)}
-                      className="w-full pl-10 pr-4 h-11 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full pl-10 pr-4 h-11 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                     />
                   </div>
-                  <p className="text-[11px] text-slate-400 font-medium mt-1">Both numbers receive the low-balance notification without duplicate message spam.</p>
+                  <p className="text-[11px] text-slate-400 font-medium mt-1">Both recipients receive alerts independently without duplicate spam.</p>
                 </div>
 
-                {/* Channel & Template Selection */}
+                {/* Channel & Gateway */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
@@ -462,43 +568,22 @@ export default function ProvidersPage() {
                       onChange={(e) => setChannelInput(e.target.value as "WHATSAPP" | "SMS")}
                       className="w-full px-3 h-11 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="WHATSAPP">WhatsApp Business API (Approved Template)</option>
+                      <option value="WHATSAPP">WhatsApp Business API (Approved Fast2SMS Templates)</option>
                       <option value="SMS">Fast2SMS Quick SMS API</option>
                     </select>
                   </div>
 
                   <div>
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-                      Provider Gateway
+                      Target Provider Gateway
                     </label>
                     <input
                       type="text"
                       disabled
-                      value="A1Topup (Live Provider API)"
+                      value="A1Topup (Live Balance Endpoint)"
                       className="w-full px-4 h-11 text-xs bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-600 dark:text-slate-400 cursor-not-allowed"
                     />
                   </div>
-                </div>
-
-                {/* Template Info Card */}
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <MessageSquare className="w-3.5 h-3.5 text-emerald-500" /> Fast2SMS Message Format Details
-                    </span>
-                    <Badge variant="outline" className="text-[10px] font-mono">
-                      {channelInput === "WHATSAPP" ? "Meta WABA • UTILITY" : "Fast2SMS • Bulk V2"}
-                    </Badge>
-                  </div>
-                  {channelInput === "WHATSAPP" ? (
-                    <div className="text-[11px] text-slate-500 bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 font-mono leading-relaxed">
-                      🚨 A1 Recharge Alert: Your A1Topup wallet balance is ₹&#123;&#123;1&#125;&#125;, below the ₹2,000 threshold. Detected at &#123;&#123;2&#125;&#125; IST. Please replenish the provider wallet.
-                    </div>
-                  ) : (
-                    <div className="text-[11px] text-slate-500 bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 font-mono leading-relaxed">
-                      A1 Recharge Alert: Your A1Topup wallet balance is ₹1,850.00, below the ₹2,000 threshold. Detected at 10:15 AM IST. Please replenish the provider wallet to avoid recharge failures.
-                    </div>
-                  )}
                 </div>
 
                 <div className="flex justify-end pt-2">
@@ -508,7 +593,7 @@ export default function ProvidersPage() {
                     className="h-11 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md"
                   >
                     {isUpdatingSettings ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <SaveIcon className="w-4 h-4 mr-2" />}
-                    Save Automation Rules
+                    Save Automation Settings
                   </Button>
                 </div>
 
@@ -522,9 +607,9 @@ export default function ProvidersPage() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
               <div>
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-                  <History className="w-4 h-4 text-purple-500" /> Monitoring & Alert Audit Trail
+                  <History className="w-4 h-4 text-purple-500" /> Monitoring &amp; Alert Audit Trail
                 </h3>
-                <p className="text-xs text-slate-400 font-medium">Full historical log of 5-minute scheduled checks, manual pings, and delivery results.</p>
+                <p className="text-xs text-slate-400 font-medium">Historical audit trail of event triggers, reconciliations, manual refreshes, and delivery status.</p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -539,8 +624,8 @@ export default function ProvidersPage() {
                 <thead>
                   <tr className="bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-500 uppercase tracking-wider">
                     <th className="py-3.5 px-4">Trigger / Check ID</th>
-                    <th className="py-3.5 px-4 text-right">A1Topup Balance</th>
-                    <th className="py-3.5 px-4 text-center">Threshold</th>
+                    <th className="py-3.5 px-4 text-right">Provider Balance</th>
+                    <th className="py-3.5 px-4 text-center">Threshold Level</th>
                     <th className="py-3.5 px-4 text-center">Status</th>
                     <th className="py-3.5 px-4 text-left">Recipients Delivery</th>
                     <th className="py-3.5 px-4 text-right">Detected At</th>
@@ -552,7 +637,7 @@ export default function ProvidersPage() {
                       <tr key={i} className="animate-pulse">
                         <td className="py-4 px-4"><div className="w-28 h-4 bg-slate-200 dark:bg-slate-800 rounded" /></td>
                         <td className="py-4 px-4 text-right"><div className="w-20 h-4 bg-slate-200 dark:bg-slate-800 rounded ml-auto" /></td>
-                        <td className="py-4 px-4 text-center"><div className="w-12 h-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
+                        <td className="py-4 px-4 text-center"><div className="w-16 h-4 bg-slate-200 dark:bg-slate-800 rounded mx-auto" /></td>
                         <td className="py-4 px-4 text-center"><div className="w-24 h-5 bg-slate-200 dark:bg-slate-800 rounded-full mx-auto" /></td>
                         <td className="py-4 px-4"><div className="w-32 h-4 bg-slate-200 dark:bg-slate-800 rounded" /></td>
                         <td className="py-4 px-4 text-right"><div className="w-24 h-4 bg-slate-200 dark:bg-slate-800 rounded ml-auto" /></td>
@@ -561,7 +646,7 @@ export default function ProvidersPage() {
                   ) : logsData?.data?.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-10 text-center text-xs text-slate-400 font-medium">
-                        No logs recorded yet. Automated checks execute continuously every 5 minutes.
+                        No logs recorded yet. Real-time events and 15-minute reconciliation checks will log here.
                       </td>
                     </tr>
                   ) : (
@@ -572,23 +657,40 @@ export default function ProvidersPage() {
                             {log.transactionId}
                           </div>
                           <span className="text-[10px] text-slate-400 font-semibold">
-                            {log.triggerType === "SCHEDULED_CHECK" ? "5-Min Scheduled Check" :
-                             log.triggerType === "MANUAL_CHECK" ? "Manual Admin Check" :
-                             log.triggerType === "EXTERNAL_CRON" ? "External Cron / Webhook" :
+                            {log.triggerType === "RECONCILIATION" ? "15-Min Reconciliation" :
+                             log.triggerType === "SCHEDULED_CHECK" ? "Scheduled Check" :
+                             log.triggerType === "MANUAL_CHECK" ? "Manual Admin Refresh" :
+                             log.triggerType === "EXTERNAL_CRON" ? "External Cron" :
                              "Recharge Event"}
                           </span>
                         </td>
                         <td className="py-3.5 px-4 text-right font-mono font-bold">
                           {log.providerBalance !== undefined && log.providerBalance !== null ? (
-                            <span className={log.providerBalance < log.threshold ? 'text-rose-600 font-black' : 'text-slate-900 dark:text-white'}>
+                            <span className={log.providerBalance < 2000 ? 'text-rose-600 font-black' : 'text-slate-900 dark:text-white'}>
                               ₹{log.providerBalance.toFixed(2)}
                             </span>
                           ) : (
                             <span className="text-slate-400">UNAVAILABLE</span>
                           )}
                         </td>
-                        <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-500">
-                          ₹{log.threshold}
+                        <td className="py-3.5 px-4 text-center">
+                          {log.thresholdLevel === 'CRITICAL_500' ? (
+                            <span className="text-[10px] font-black text-red-600 bg-red-50 dark:bg-red-950 px-2 py-0.5 rounded-full border border-red-200 dark:border-red-900">
+                              CRITICAL (≤ ₹500)
+                            </span>
+                          ) : log.thresholdLevel === 'LOW_1000' ? (
+                            <span className="text-[10px] font-black text-orange-600 bg-orange-50 dark:bg-orange-950 px-2 py-0.5 rounded-full border border-orange-200 dark:border-orange-900">
+                              HIGH-PRIORITY (≤ ₹1,000)
+                            </span>
+                          ) : log.thresholdLevel === 'LOW_2000' ? (
+                            <span className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-900">
+                              WARNING (&lt; ₹2,000)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950 px-2 py-0.5 rounded-full">
+                              NORMAL (&ge; ₹2,000)
+                            </span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 text-center">
                           {log.overallStatus === 'ALERT_SENT' ? (
@@ -695,7 +797,7 @@ export default function ProvidersPage() {
                         </div>
                         {isLowBalance && (
                           <p className="flex items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400 mt-3 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-xl w-fit border border-red-100 dark:border-red-900/30">
-                            <AlertTriangle className="w-4 h-4 shrink-0" /> Low Balance Alert (&lt; ₹{autoSettings?.threshold || 2000})!
+                            <AlertTriangle className="w-4 h-4 shrink-0" /> Low Balance Alert (&lt; ₹2,000)!
                           </p>
                         )}
                       </div>
@@ -742,7 +844,7 @@ export default function ProvidersPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-slate-900 dark:text-white">Send Test Alert Preview</h3>
-                  <p className="text-xs text-slate-400 font-medium">Verify Fast2SMS delivery to your device</p>
+                  <p className="text-xs text-slate-400 font-medium">Verify Fast2SMS WhatsApp template delivery</p>
                 </div>
               </div>
               <button onClick={() => setIsTestModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600">
@@ -751,6 +853,21 @@ export default function ProvidersPage() {
             </div>
 
             <form onSubmit={handleExecuteTest} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
+                  Select Template Alert Level
+                </label>
+                <select
+                  value={testLevelInput}
+                  onChange={(e) => setTestLevelInput(e.target.value as any)}
+                  className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="LOW_2000">₹2,000 Warning (provider_wallet_low_balance_2000)</option>
+                  <option value="LOW_1000">₹1,000 High-Priority (provider_wallet_low_balance_1000)</option>
+                  <option value="CRITICAL_500">₹500 Critical Alert (provider_wallet_critical_balance_500)</option>
+                </select>
+              </div>
+
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
                   Test Mobile Number *
@@ -767,21 +884,21 @@ export default function ProvidersPage() {
 
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1.5">
-                  Test Delivery Channel
+                  Delivery Channel
                 </label>
                 <select
                   value={testChannelInput}
                   onChange={(e) => setTestChannelInput(e.target.value as "WHATSAPP" | "SMS")}
                   className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="WHATSAPP">WhatsApp Business API</option>
+                  <option value="WHATSAPP">WhatsApp Business API (Approved Fast2SMS Template)</option>
                   <option value="SMS">Fast2SMS Quick SMS</option>
                 </select>
               </div>
 
               <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl text-xs text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-900/30 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500 mt-0.5" />
-                <span>Simulates low balance of ₹1,850 below the ₹2,000 threshold to verify recipient delivery.</span>
+                <span>Sends live preview with simulated balance and current IST timestamp to verify Fast2SMS formatting.</span>
               </div>
 
               <div className="flex justify-end gap-3 pt-2">

@@ -45,22 +45,49 @@ export function useRefreshProviderBalance() {
   });
 }
 
+export interface ThresholdAlertDetail {
+  alertSent: boolean;
+  lastAlertAt?: string;
+  lastAlertBalance?: number;
+  deliveredRecipients: string[];
+  recipientsStatus?: Array<{
+    recipient: string;
+    status: 'SENT' | 'FAILED' | 'SKIPPED';
+    requestId?: string;
+    errorDetails?: string;
+    channel?: string;
+    sentAt: string;
+  }>;
+  messageId: number;
+  templateId: string;
+  templateName: string;
+}
+
 export interface ProviderAutomationSettingsData {
   enabled: boolean;
   providerName: string;
   threshold: number;
   recipients: string[];
   channel?: 'WHATSAPP' | 'SMS';
-  templateName: string;
-  messageId: number;
   phoneNumberId: string;
-  checkIntervalMinutes?: number;
+  minRefreshSeconds?: number;
+  reconcileIntervalMinutes?: number;
   monitoringStatus?: 'ACTIVE' | 'DISABLED' | 'ERROR' | 'CHECKING';
+  currentThresholdState?: 'NORMAL' | 'LOW_2000' | 'LOW_1000' | 'CRITICAL_500' | 'UNKNOWN';
+  isRecovered?: boolean;
+  lastRecoveredAt?: string;
+  thresholdAlerts?: {
+    LOW_2000?: ThresholdAlertDetail;
+    LOW_1000?: ThresholdAlertDetail;
+    CRITICAL_500?: ThresholdAlertDetail;
+  };
   alertSent?: boolean;
   lastCheckAt?: string;
   lastSuccessfulCheckAt?: string;
   nextCheckAt?: string;
+  nextReconcileAt?: string;
   lastAlertAt?: string;
+  lastAlertLevel?: 'LOW_2000' | 'LOW_1000' | 'CRITICAL_500' | null;
   lastAlertBalance?: number;
   lastBalance?: number;
   lastStatus: 'NORMAL' | 'LOW_BALANCE' | 'UNKNOWN';
@@ -74,6 +101,16 @@ export interface ProviderAutomationSettingsData {
     channel?: string;
     sentAt: string;
   }>;
+  templates?: Record<string, {
+    level: string;
+    threshold: number;
+    name: string;
+    messageId: number;
+    templateId: string;
+    category: string;
+    language: string;
+    description: string;
+  }>;
 }
 
 export interface ProviderAutomationLogItem {
@@ -84,9 +121,13 @@ export interface ProviderAutomationLogItem {
   providerName: string;
   providerBalance?: number;
   threshold: number;
+  thresholdLevel?: 'NORMAL' | 'LOW_2000' | 'LOW_1000' | 'CRITICAL_500' | 'UNKNOWN';
+  templateName?: string;
+  templateId?: string;
+  messageId?: number;
   detectedAt: string;
   overallStatus: 'ALERT_SENT' | 'PARTIAL_SUCCESS' | 'FAILED' | 'NO_ALERT_NEEDED' | 'ERROR_SKIPPED' | 'DISABLED' | 'ALREADY_ALERTED' | 'RECOVERED';
-  triggerType?: 'SCHEDULED_CHECK' | 'MANUAL_CHECK' | 'RECHARGE_EVENT' | 'EXTERNAL_CRON';
+  triggerType?: 'SCHEDULED_CHECK' | 'MANUAL_CHECK' | 'RECHARGE_EVENT' | 'EXTERNAL_CRON' | 'RECONCILIATION';
   recipientsStatus: Array<{
     recipient: string;
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -156,8 +197,9 @@ export function useProviderAutomationLogs(page = 1, limit = 20) {
 
 export function useSendProviderAutomationTest() {
   return useMutation({
-    mutationFn: async (testNumber: string) => {
-      const { data } = await api.post('/admin/provider-automations/test', { testNumber });
+    mutationFn: async (payload: string | { testNumber: string; level?: string; channel?: string }) => {
+      const body = typeof payload === 'string' ? { testNumber: payload } : payload;
+      const { data } = await api.post('/admin/provider-automations/test', body);
       return data;
     },
   });
